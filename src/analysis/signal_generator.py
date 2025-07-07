@@ -170,14 +170,15 @@ class SignalGenerator:
         max_possible_score = 6 + 2 + 2  # Max possible conditions from all categories
         current_score = sum(scores.values())
         return current_score / max_possible_score if max_possible_score > 0 else 0
-        
+
     def _calculate_risk_metrics(self, stock: Dict, technical: Dict,
                               market_depth: Dict) -> Dict:
-        # Get the current price and ATR value safely
+        # Get the current price and key indicators safely
         price = stock.get('last_trade_price', 0)
         atr = technical.get('atr', 0)
+        bb_mid = technical.get('bb_mid', 0)
 
-        # Get multipliers from config file, with sane defaults
+        # Get multipliers from config file
         stop_loss_multiplier = self.strategy_config.get('stop_loss_atr_multiplier', 2.0)
         take_profit_multiplier = self.strategy_config.get('take_profit_atr_multiplier', 4.0)
 
@@ -185,13 +186,23 @@ class SignalGenerator:
         stop_loss = price - (atr * stop_loss_multiplier) if atr > 0 and price > 0 else 0
         take_profit = price + (atr * take_profit_multiplier) if atr > 0 and price > 0 else 0
 
+        # --- Adjusted Buy Price Logic ---
+        adjusted_buy_price = price # Default to current price
+        if price > 0 and bb_mid > 0 and price > bb_mid:
+            # If the price is above the moving average, suggest an entry on a
+            # slight pullback to the midpoint. This is a better entry.
+            adjusted_buy_price = (price + bb_mid) / 2
+        # --- End Logic ---
+
         return {
             'volatility': atr,
             'liquidity_risk': self._calculate_liquidity_risk(market_depth),
             'position_size': self._calculate_position_size(stock),
             'stop_loss': stop_loss,
-            'take_profit': take_profit  # Add the new take-profit price here
-        }
+            'take_profit': take_profit,
+            'adjusted_buy_price': adjusted_buy_price  # Add the new adjusted price
+        }     
+   
     def _calculate_liquidity_risk(self, depth: Dict) -> float:
         bids_vol = depth.get('bids_vol', 0)
         asks_vol = depth.get('asks_vol', 0)

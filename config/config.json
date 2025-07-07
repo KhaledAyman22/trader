@@ -1,173 +1,52 @@
 {
-
-    "telegram_bot_token": "",
-    "scan_interval_seconds": 10,
-    "historical_lookback_minutes": 150,
-    "chart_resolution": "five_minutes",
-    "max_concurrent": 3,
-
-    "api_settings": {
-        "headers": {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json",
-            "Authorization": ""
-        },
-        "rate_limit_requests_per_minute": 600,
-        "request_timeout_seconds": 30,
-        "retry_attempts": 3,
-        "backoff_factor": 2
+  "telegram_bot_token": "",
+  "scan_interval_seconds": 10,
+  "historical_lookback_minutes": 150,
+  "chart_resolution": "five_minutes",
+  "max_concurrent": 3,
+  "api_settings": {
+    "headers": {
+      "User-Agent": "Mozilla/5.0",
+      "Accept": "application/json",
+      "Authorization": ""
     },
-    "database": {
-        "host": "localhost",
-        "port": 5432,
-        "database": "trader_db",
-        "user": "postgres",
-        "password": "admin",
-        "pool_size": 10,
-        "max_overflow": 20,
-        "pool_timeout": 30
+    "rate_limit_requests_per_minute": 600,
+    "request_timeout_seconds": 30
+  },
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "database": "trader_db",
+    "user": "postgres",
+    "password": "admin",
+    "pool_size": 10,
+    "max_overflow": 20,
+    "pool_timeout": 30
+  },
+  "strategy": {
+    "debug_mode": true,
+    "min_price": 2.0,
+    "max_price": 500.0,
+    "min_market_cap": 5000000,
+    "blacklist_symbols": ["DELISTED", "SUSPENDED"],
+    "institutional_trade_threshold": 50000,
+    "min_daily_volume": 250000,
+    "max_spread_pct": 0.02,
+    "min_tech_conditions": 4,
+    "min_flow_conditions": 1,
+    "min_depth_conditions": 1,
+    "technical_thresholds": {
+      "rsi_oversold": 30,
+      "rsi_overbought": 70,
+      "adx_trend_threshold": 25,
+      "macd_signal_threshold": 0
     },
-    "strategy": {
-        "min_price": 2.0,
-        "max_price": 500.0,
-        "min_market_cap": 5000000,
-        "institutional_trade_threshold": 50000,
-        "min_daily_volume": 250000,
-        "blacklist_symbols": ["DELISTED", "SUSPENDED"],
-        "min_tech_conditions": 4,
-        "min_flow_conditions": 1,
-        "min_depth_conditions": 1,
-        "max_spread_pct": 0.02,
-        "technical_weights": {
-            "trend": 0.45,
-            "momentum": 0.35,
-            "volatility": 0.20
-        },
-        "fundamental_weights": {
-            "valuation": 0.25,
-            "growth": 0.35,
-            "quality": 0.25,
-            "market_position": 0.15
-        },
-        "trade_flow_weights": {
-            "buy_pressure": 0.45,
-            "institutional": 0.35,
-            "price_impact": 0.20
-        },
-        "signal_weights": {
-            "technical": 0.50,
-            "fundamental": 0.20,
-            "trade_flow": 0.20,
-            "market_depth": 0.10
-        },
-        "min_signal_strength": 0.65,
-        "stop_loss_atr_multiplier": 2.5,
-        "take_profit_atr_multiplier": 4.0,
-        "max_position_size": 75000,
-        "technical_thresholds": {
-            "rsi_oversold": 30,
-            "rsi_overbought": 70,
-            "rsi_fast_threshold": 25,
-            "stoch_oversold": 20,
-            "stoch_overbought": 80,
-            "macd_signal_threshold": 0.01,
-            "adx_trend_threshold": 25,
-            "bb_position_buy": 0.2,
-            "bb_position_sell": 0.8,
-            "volume_surge_multiplier": 2.0
-        },
-        "fundamental_thresholds": {
-            "max_pe": 25,
-            "max_debt_to_equity": 1.5,
-            "min_current_ratio": 1.2,
-            "high_margin_threshold": 0.12,
-            "high_roe_threshold": 0.12,
-            "market_leader_threshold": 2000000000,
-            "min_revenue_growth": 0.05,
-            "max_peg_ratio": 2.0
-        },
-        "trade_flow_thresholds": {
-            "strong_buy_pressure": 0.65,
-            "strong_sell_pressure": 0.35,
-            "high_institutional_ratio": 0.60,
-            "significant_price_impact": 0.02
-        }
+    "trade_flow_thresholds": {
+      "strong_buy_pressure": 0.65,
+      "high_institutional_ratio": 0.6
     },
-    "risk_management": {
-        "max_position_size": 75000,
-        "max_portfolio_risk": 0.015,
-        "max_correlation": 0.65,
-        "max_positions_per_sector": 3,
-        "position_sizing": {
-            "atr_multiplier": 2.5,
-            "max_capital_per_trade": 0.08,
-            "volatility_adjustment": true,
-            "liquidity_adjustment": true
-        },
-        "stop_loss": {
-            "trailing_stop": true,
-            "trailing_percentage": 0.05,
-            "max_loss_per_trade": 0.02
-        },
-        "portfolio_limits": {
-            "max_drawdown": 0.10,
-            "max_daily_loss": 0.03,
-            "rebalance_threshold": 0.05
-        }
-    },
-    "alerts": {
-        "enabled": true,
-        "min_alert_interval_minutes": 3,
-        "notification_types": ["signal", "error", "warning", "info", "risk"],
-        "priority_thresholds": {
-            "critical": 0.9,
-            "high": 0.75,
-            "medium": 0.5,
-            "low": 0.25
-        },
-        "alert_channels": {
-            "telegram": true,
-            "email": false,
-            "database": true
-        }
-    },
-    "performance_tracking": {
-        "metrics": [
-            "sharpe_ratio",
-            "max_drawdown", 
-            "win_rate",
-            "profit_factor",
-            "sortino_ratio",
-            "calmar_ratio",
-            "avg_holding_period",
-            "volatility"
-        ],
-        "benchmark_index": "EGX30",
-        "tracking_period_days": 60,
-        "performance_update_interval": 300,
-        "save_trade_history": true
-    },
-    "data_quality": {
-        "min_history_length": 30,
-        "max_missing_data_ratio": 0.1,
-        "outlier_detection": true,
-        "data_validation": true
-    },
-    "logging": {
-        "level": "INFO",
-        "file_path": "logs/trading_bot.log",
-        "max_file_size": "10MB",
-        "backup_count": 5,
-        "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    },
-    "market_conditions": {
-        "trading_hours": {
-            "start": "10:00",
-            "end": "14:30",
-            "timezone": "Africa/Cairo"
-        },
-        "holidays": [],
-        "pre_market_analysis": true,
-        "after_hours_monitoring": false
-    }
+    "stop_loss_atr_multiplier": 2.0,
+    "take_profit_atr_multiplier": 4.0,
+    "max_position_size": 75000
+  }
 }

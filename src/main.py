@@ -162,17 +162,21 @@ class TradingApp:
             await self.telegram.send_alert('signal', message)
 
     def _format_signal_message(self, signal: Dict) -> str:
-        # --- Extract data safely from the enriched signal object ---
+        # Safely extract all data from the enriched signal object
         stock_details = signal.get('stock_details', {})
         risk_metrics = signal.get('risk_metrics', {})
         tech_indicators = signal.get('technical_indicators', {})
         component_scores = signal.get('component_scores', {})
 
-        # Basic Info
         price = signal.get('price', 0)
         signal_type = signal.get('signal_type', 'N/A').replace('_', ' ').upper()
         
-        # Stock Details
+        # Get the overall signal strength percentage
+        overall_strength = signal.get('signal_strength', 0)
+
+        # Get the adjusted buy price
+        adjusted_buy_price = risk_metrics.get('adjusted_buy_price', 0)
+
         name = stock_details.get('name', 'N/A')
         symbol = stock_details.get('symbol', 'N/A')
         change_pct = stock_details.get('last_change_prc', 0)
@@ -180,18 +184,14 @@ class TradingApp:
         sector = stock_details.get('industry', 'N/A')
         pe_ratio = stock_details.get('pe_ratio', 0)
 
-        # Technicals
         rsi = tech_indicators.get('rsi', 0)
         macd = tech_indicators.get('macd', 0)
         atr = tech_indicators.get('atr', 0)
 
-        # Scores
         tech_score = component_scores.get('technical', 0)
         flow_score = component_scores.get('trade_flow', 0)
         depth_score = component_scores.get('market_depth', 0)
-        total_score = tech_score + flow_score + depth_score
 
-        # Risk Management
         stop_loss = risk_metrics.get('stop_loss', 0)
         take_profit = risk_metrics.get('take_profit', 0)
         
@@ -199,11 +199,70 @@ class TradingApp:
         if (price - stop_loss) > 0:
             risk_reward = (take_profit - price) / (price - stop_loss)
 
-        # --- Build the message ---
+        # Build the message
         return (
             f"🚀 *{signal_type} SIGNAL*\n"
             f"*{name} ({symbol})*\n\n"
-            f"💰 *Price:* `{price:.2f} EGP`\n"
+            f"💰 *Current Price:* `{price:.2f} EGP`\n"
+            f"🎯 *Entry Target:* `{adjusted_buy_price:.2f} EGP`\n"
+            f"📊 *Change:* `{change_pct:.2f}%`\n"
+            f"🏢 *Market Cap:* `{market_cap}`\n"
+            f"🏭 *Sector:* {sector}\n"
+            f"📈 *P/E:* `{pe_ratio:.2f}`\n\n"
+            f"📊 *Technical Indicators:*\n"
+            f"• RSI(14): `{rsi:.1f}`\n"
+            f"• MACD: `{macd:.3f}`\n"
+            f"• ATR: `{atr:.2f}`\n\n"
+            f"🎯 *Signal Breakdown:*\n"
+            f"• Technical: `{tech_score}/6`\n"
+            f"• Trade Flow: `{flow_score}/2`\n"
+            f"• Market Depth: `{depth_score}/2`\n\n"
+            f"⭐ *Overall Strength:* `{overall_strength:.0%}`\n\n" # Add the new line here
+            f"🎯 *Exit Strategy:*\n"
+            f"🔴 *Stop-Loss:* `{stop_loss:.2f} EGP`\n"
+            f"🟢 *Take-Profit:* `{take_profit:.2f} EGP`\n"
+            f"📏 *Risk/Reward:* `1:{risk_reward:.1f}`"
+        )
+        # Safely extract all data from the enriched signal object
+        stock_details = signal.get('stock_details', {})
+        risk_metrics = signal.get('risk_metrics', {})
+        tech_indicators = signal.get('technical_indicators', {})
+        component_scores = signal.get('component_scores', {})
+
+        price = signal.get('price', 0)
+        signal_type = signal.get('signal_type', 'N/A').replace('_', ' ').upper()
+        
+        # New: Get the adjusted buy price
+        adjusted_buy_price = risk_metrics.get('adjusted_buy_price', 0)
+
+        name = stock_details.get('name', 'N/A')
+        symbol = stock_details.get('symbol', 'N/A')
+        change_pct = stock_details.get('last_change_prc', 0)
+        market_cap = format_market_cap(stock_details.get('market_cap', 0))
+        sector = stock_details.get('industry', 'N/A')
+        pe_ratio = stock_details.get('pe_ratio', 0)
+
+        rsi = tech_indicators.get('rsi', 0)
+        macd = tech_indicators.get('macd', 0)
+        atr = tech_indicators.get('atr', 0)
+
+        tech_score = component_scores.get('technical', 0)
+        flow_score = component_scores.get('trade_flow', 0)
+        depth_score = component_scores.get('market_depth', 0)
+
+        stop_loss = risk_metrics.get('stop_loss', 0)
+        take_profit = risk_metrics.get('take_profit', 0)
+        
+        risk_reward = 0
+        if (price - stop_loss) > 0:
+            risk_reward = (take_profit - price) / (price - stop_loss)
+
+        # Build the message
+        return (
+            f"🚀 *{signal_type} SIGNAL*\n"
+            f"*{name} ({symbol})*\n\n"
+            f"💰 *Current Price:* `{price:.2f} EGP`\n"
+            f"🎯 *Entry Target:* `{adjusted_buy_price:.2f} EGP`\n"  # Add the new line here
             f"📊 *Change:* `{change_pct:.2f}%`\n"
             f"🏢 *Market Cap:* `{market_cap}`\n"
             f"🏭 *Sector:* {sector}\n"
