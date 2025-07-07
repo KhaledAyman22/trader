@@ -28,13 +28,21 @@ class TradingApp:
         
         while True:
             try:
+                # --- CORRECT PLACEMENT ---
+                # Check for new Telegram subscribers independently of the market cycle.
+                await self.telegram.process_updates()
+                # --- END ---
+
                 await self._process_market_cycle()
-                await asyncio.sleep(self.config.get('scan_interval_seconds', 300))
-                logging.info("Market cycle completed successfully.")
+                
+                # The main sleep interval for the entire loop
+                await asyncio.sleep(self.config.get('scan_interval_seconds', 10))
+
             except Exception as e:
-                self.logger.error(f"Error in market cycle: {e}")
-                await self.telegram.send_alert('error', f"Market cycle failed: {str(e)}", 'high')
-                await asyncio.sleep(5)
+                self.logger.error(f"Error in main application loop: {e}")
+                # Optional: Send an alert for critical errors in the loop itself
+                await self.telegram.send_alert('error', f"Critical application error: {str(e)}", 'high')
+                await asyncio.sleep(60) # Wait longer after a critical failure
 
     async def _process_market_cycle(self):
         async with aiohttp.ClientSession() as session:

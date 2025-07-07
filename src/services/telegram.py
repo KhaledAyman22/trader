@@ -4,6 +4,7 @@ from typing import List, Dict, Optional
 from sqlalchemy.orm import Session
 from ..database.models import Subscriber
 from datetime import datetime
+import asyncio
 
 class TelegramService:
     def __init__(self, config: Dict, db: Session):
@@ -30,14 +31,31 @@ class TelegramService:
 
     async def broadcast_message(self, message: str) -> Dict[str, bool]:
         results = {}
-        subscribers = self.db.query(Subscriber).all()
         
+        # --- FIX: Run the blocking DB call in a separate thread ---
+        loop = asyncio.get_running_loop()
+        try:
+            # This runs the synchronous query in a thread pool executor
+            subscribers = await loop.run_in_executor(
+                None, lambda: self.db.query(Subscriber).all()
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to query subscribers from DB: {e}")
+            return {}
+        # --- END FIX ---
+        
+        if not subscribers:
+            self.logger.warning("No subscribers found in the database. No alerts will be sent.")
+            return {}
+
+        self.logger.info(f"Broadcasting message to {len(subscribers)} subscribers.")
+
         for subscriber in subscribers:
             success = await self.send_message(subscriber.chat_id, message)
             results[subscriber.chat_id] = success
         
         return results
-
+    
     async def send_alert(self, alert_type: str, content: str, priority: str = 'normal') -> None:
         emoji_map = {
             'signal': '🚀',

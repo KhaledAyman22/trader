@@ -93,7 +93,7 @@ class MarketDataService:
         resolution = self.config.get('chart_resolution', 'five_minutes')
         # --- End Market-Aware Logic ---
 
-        url = f"{self.base_url}/charts/advanced?asset_id={asset_id}&resolution={resolution}&from_timestamp={from_timestamp}&to_timestamp={to_timestamp}"
+        url = f"{self.base_url}/charts/advanced?asset_id={asset_id}&resolution={resolution}&from_timestamp={1751873051752}&to_timestamp={to_timestamp}"
         data = await self.fetch_json(session, url, headers)
         
         # Log the request for debugging if no points are returned
