@@ -139,10 +139,11 @@ def calculate_technical_indicators(history: List[Dict]) -> Optional[Dict]:
         try:
             # Simple Moving Averages
             indicators['sma_20'] = df['close'].rolling(window=20).mean().iloc[-1]
-            indicators['sma_50'] = df['close'].rolling(window=50).mean().iloc[-1] if len(df) >= 50 else None
+            # Changed sma_50 to sma_30 to reduce data requirement
+            indicators['sma_30'] = df['close'].rolling(window=30).mean().iloc[-1] if len(df) >= 30 else None
         except:
             indicators['sma_20'] = None
-            indicators['sma_50'] = None
+            indicators['sma_30'] = None
             
         try:
             # Exponential Moving Averages

@@ -62,7 +62,7 @@ class TradingApp:
                     self.logger.error(f"Error analyzing {stock.get('symbol')}: {e}")
                 
                 finally:
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(1)
 
 
     async def _analyze_stock(self, session: aiohttp.ClientSession, stock: Dict) -> Dict:

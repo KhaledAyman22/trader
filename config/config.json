@@ -1,4 +1,11 @@
 {
+
+    "telegram_bot_token": "7951294938:AAGcThQhmF78pp4KmAt48nETvU5WASMVtgU",
+    "scan_interval_seconds": 10,
+    "historical_lookback_minutes": 150,
+    "chart_resolution": "five_minutes",
+    "max_concurrent": 3,
+
     "api_settings": {
         "headers": {
             "User-Agent": "Mozilla/5.0",
@@ -20,10 +27,6 @@
         "max_overflow": 20,
         "pool_timeout": 30
     },
-    "telegram_bot_token": "7951294938:AAGjpBy8pR-Y-Htzbly6JGcHXMG6EOwbJx4",
-    "scan_interval_seconds": 10,
-    "historical_lookback_minutes": 120,
-    "max_concurrent": 3,
     "strategy": {
         "min_price": 2.0,
         "max_price": 500.0,
@@ -31,6 +34,10 @@
         "institutional_trade_threshold": 50000,
         "min_daily_volume": 250000,
         "blacklist_symbols": ["DELISTED", "SUSPENDED"],
+        "min_tech_conditions": 4,
+        "min_flow_conditions": 1,
+        "min_depth_conditions": 1,
+        "max_spread_pct": 0.02,
         "technical_weights": {
             "trend": 0.45,
             "momentum": 0.35,

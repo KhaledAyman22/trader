@@ -73,9 +73,13 @@ class MarketDataService:
 
     async def fetch_historical_data(self, session: aiohttp.ClientSession, headers: Dict, asset_id: str) -> List[Dict]:
         now = int(datetime.now().timestamp() * 1000)
-        # Look back 2 days to ensure enough data, even at market open
-        before = int((datetime.now() - timedelta(days=2)).timestamp() * 1000)
-        resolution = self.config.get('chart_resolution', 'day')
+        
+        # Use the 'historical_lookback_minutes' from the config
+        lookback_minutes = self.config.get('historical_lookback_minutes') 
+        before = int((datetime.now() - timedelta(minutes=lookback_minutes)).timestamp() * 1000)
+        
+        # Use the 'chart_resolution' from the config, with a sensible default
+        resolution = self.config.get('chart_resolution') 
         
         url = f"{self.base_url}/charts/advanced?asset_id={asset_id}&resolution={resolution}&from_timestamp={before}&to_timestamp={now}"
         data = await self.fetch_json(session, url, headers)
