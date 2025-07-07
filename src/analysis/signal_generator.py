@@ -37,7 +37,9 @@ class SignalGenerator:
         signal_type = self._determine_signal_type(scores)
         signal_strength = self._calculate_signal_strength(scores)
 
-        return {
+        # --- ENRICH THE SIGNAL OBJECT ---
+        # Add the original stock data and component scores directly to the signal.
+        signal = {
             'symbol': stock.get('symbol'),
             'timestamp': stock.get('last_update_time'),
             'price': stock.get('last_trade_price'),
@@ -47,8 +49,9 @@ class SignalGenerator:
             'technical_indicators': technical,
             'trade_flow_metrics': trade_flow,
             'risk_metrics': self._calculate_risk_metrics(stock, technical, market_depth),
+            'stock_details': stock  # This includes market_cap, P/E, sector, etc.
         }
-
+        return signal
     def _calculate_component_scores(self, technical: Dict, trade_flow: Dict, market_depth: Dict) -> Dict:
         # This function now returns a dictionary of integer counts.
         return {
@@ -160,6 +163,7 @@ class SignalGenerator:
             return 'BUY'
 
         return 'NEUTRAL'
+   
     def _calculate_signal_strength(self, scores: Dict) -> float:
         # This function provides a simple strength score for informational display.
         # It does NOT determine the signal itself.
@@ -167,16 +171,27 @@ class SignalGenerator:
         current_score = sum(scores.values())
         return current_score / max_possible_score if max_possible_score > 0 else 0
         
-    def _calculate_risk_metrics(self, stock: Dict, technical: Dict, 
+    def _calculate_risk_metrics(self, stock: Dict, technical: Dict,
                               market_depth: Dict) -> Dict:
-        # This part of your new script is well-structured and can remain.
+        # Get the current price and ATR value safely
+        price = stock.get('last_trade_price', 0)
+        atr = technical.get('atr', 0)
+
+        # Get multipliers from config file, with sane defaults
+        stop_loss_multiplier = self.strategy_config.get('stop_loss_atr_multiplier', 2.0)
+        take_profit_multiplier = self.strategy_config.get('take_profit_atr_multiplier', 4.0)
+
+        # Calculate stop-loss and take-profit prices
+        stop_loss = price - (atr * stop_loss_multiplier) if atr > 0 and price > 0 else 0
+        take_profit = price + (atr * take_profit_multiplier) if atr > 0 and price > 0 else 0
+
         return {
-            'volatility': technical.get('atr', 0),
+            'volatility': atr,
             'liquidity_risk': self._calculate_liquidity_risk(market_depth),
             'position_size': self._calculate_position_size(stock),
-            'stop_loss': self._calculate_stop_loss(technical)
+            'stop_loss': stop_loss,
+            'take_profit': take_profit  # Add the new take-profit price here
         }
-
     def _calculate_liquidity_risk(self, depth: Dict) -> float:
         bids_vol = depth.get('bids_vol', 0)
         asks_vol = depth.get('asks_vol', 0)

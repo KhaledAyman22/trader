@@ -10,6 +10,17 @@ from src.services.telegram import TelegramService
 from src.analysis.signal_generator import SignalGenerator
 from src.utils.rate_limiter import RateLimiter
 
+
+def format_market_cap(market_cap):
+    """Helper function to format market cap for display."""
+    if not isinstance(market_cap, (int, float)) or market_cap <= 0:
+        return "N/A"
+    if market_cap >= 1e9:
+        return f"{market_cap / 1e9:.2f}B EGP"
+    elif market_cap >= 1e6:
+        return f"{market_cap / 1e6:.2f}M EGP"
+    return f"{market_cap / 1e3:.2f}K EGP"
+    
 class TradingApp:
     def __init__(self, config: Dict):
         self.config = config
@@ -71,7 +82,6 @@ class TradingApp:
                 
                 finally:
                     await asyncio.sleep(1)
-
 
     async def _analyze_stock(self, session: aiohttp.ClientSession, stock: Dict) -> Dict:
         asset_id = stock.get('asset_id')
@@ -152,17 +162,62 @@ class TradingApp:
             await self.telegram.send_alert('signal', message)
 
     def _format_signal_message(self, signal: Dict) -> str:
+        # --- Extract data safely from the enriched signal object ---
+        stock_details = signal.get('stock_details', {})
+        risk_metrics = signal.get('risk_metrics', {})
+        tech_indicators = signal.get('technical_indicators', {})
+        component_scores = signal.get('component_scores', {})
+
+        # Basic Info
+        price = signal.get('price', 0)
+        signal_type = signal.get('signal_type', 'N/A').replace('_', ' ').upper()
+        
+        # Stock Details
+        name = stock_details.get('name', 'N/A')
+        symbol = stock_details.get('symbol', 'N/A')
+        change_pct = stock_details.get('last_change_prc', 0)
+        market_cap = format_market_cap(stock_details.get('market_cap', 0))
+        sector = stock_details.get('industry', 'N/A')
+        pe_ratio = stock_details.get('pe_ratio', 0)
+
+        # Technicals
+        rsi = tech_indicators.get('rsi', 0)
+        macd = tech_indicators.get('macd', 0)
+        atr = tech_indicators.get('atr', 0)
+
+        # Scores
+        tech_score = component_scores.get('technical', 0)
+        flow_score = component_scores.get('trade_flow', 0)
+        depth_score = component_scores.get('market_depth', 0)
+        total_score = tech_score + flow_score + depth_score
+
+        # Risk Management
+        stop_loss = risk_metrics.get('stop_loss', 0)
+        take_profit = risk_metrics.get('take_profit', 0)
+        
+        risk_reward = 0
+        if (price - stop_loss) > 0:
+            risk_reward = (take_profit - price) / (price - stop_loss)
+
+        # --- Build the message ---
         return (
-            f"*{signal['signal_type']} Signal*\n"
-            f"Symbol: `{signal['symbol']}`\n"
-            f"Price: `{signal['price']:.2f}`\n"
-            f"Strength: `{signal['signal_strength']:.2%}`\n\n"
-            f"*Technical Indicators*\n"
-            f"RSI: `{signal['technical_indicators'].get('rsi', 0):.1f}`\n"
-            f"MACD: `{signal['technical_indicators'].get('macd', 0):.3f}`\n"
-            f"ATR: `{signal['technical_indicators'].get('atr', 0):.3f}`\n\n"
-            f"*Risk Metrics*\n"
-            f"Stop Loss: `{signal['risk_metrics']['stop_loss']:.2f}`\n"
-            f"Position Size: `{signal['risk_metrics']['position_size']:.0f}`\n"
-            f"Liquidity Risk: `{signal['risk_metrics']['liquidity_risk']:.1%}`"
+            f"🚀 *{signal_type} SIGNAL*\n"
+            f"*{name} ({symbol})*\n\n"
+            f"💰 *Price:* `{price:.2f} EGP`\n"
+            f"📊 *Change:* `{change_pct:.2f}%`\n"
+            f"🏢 *Market Cap:* `{market_cap}`\n"
+            f"🏭 *Sector:* {sector}\n"
+            f"📈 *P/E:* `{pe_ratio:.2f}`\n\n"
+            f"📊 *Technical Indicators:*\n"
+            f"• RSI(14): `{rsi:.1f}`\n"
+            f"• MACD: `{macd:.3f}`\n"
+            f"• ATR: `{atr:.2f}`\n\n"
+            f"🎯 *Signal Strength:*\n"
+            f"• Technical: `{tech_score}/6`\n"
+            f"• Trade Flow: `{flow_score}/2`\n"
+            f"• Market Depth: `{depth_score}/2`\n\n"
+            f"🎯 *Exit Strategy:*\n"
+            f"🔴 *Stop-Loss:* `{stop_loss:.2f} EGP`\n"
+            f"🟢 *Take-Profit:* `{take_profit:.2f} EGP`\n"
+            f"📏 *Risk/Reward:* `1:{risk_reward:.1f}`"
         )
