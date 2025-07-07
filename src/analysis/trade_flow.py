@@ -28,7 +28,7 @@ def analyze_trade_flow(trades_data: Union[List[Dict], Dict], config: Dict) -> Di
     if not trades:
         return create_empty_trade_flow()
     
-    institutional_threshold = config.get('strategy', {}).get('institutional_trade_threshold', 100000)
+    institutional_threshold = config.get('strategy', {}).get('institutional_trade_threshold')
     
     # Enhanced trade classification
     classified_trades = classify_trades(trades, institutional_threshold)

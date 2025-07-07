@@ -72,19 +72,36 @@ class MarketDataService:
         return self._merge_stock_data(stock, data)
 
     async def fetch_historical_data(self, session: aiohttp.ClientSession, headers: Dict, asset_id: str) -> List[Dict]:
-        now = int(datetime.now().timestamp() * 1000)
+        # --- Market-Aware Timestamp Calculation ---
+        now_dt = datetime.now()
+        market_close_dt = now_dt.replace(hour=14, minute=30, second=0, microsecond=0)
+
+        # If the script is run after market close, set the end time to the closing bell.
+        # Otherwise, use the current time.
+        if now_dt > market_close_dt:
+            end_dt = market_close_dt
+        else:
+            end_dt = now_dt
+            
+        to_timestamp = int(end_dt.timestamp() * 1000)
+
+        # Get lookback period from config
+        lookback_minutes = self.config.get('historical_lookback_minutes', 150)
+        start_dt = end_dt - timedelta(minutes=lookback_minutes)
+        from_timestamp = int(start_dt.timestamp() * 1000)
         
-        # Use the 'historical_lookback_minutes' from the config
-        lookback_minutes = self.config.get('historical_lookback_minutes') 
-        before = int((datetime.now() - timedelta(minutes=lookback_minutes)).timestamp() * 1000)
-        
-        # Use the 'chart_resolution' from the config, with a sensible default
-        resolution = self.config.get('chart_resolution') 
-        
-        url = f"{self.base_url}/charts/advanced?asset_id={asset_id}&resolution={resolution}&from_timestamp={before}&to_timestamp={now}"
+        resolution = self.config.get('chart_resolution', 'five_minutes')
+        # --- End Market-Aware Logic ---
+
+        url = f"{self.base_url}/charts/advanced?asset_id={asset_id}&resolution={resolution}&from_timestamp={from_timestamp}&to_timestamp={to_timestamp}"
         data = await self.fetch_json(session, url, headers)
         
-        return data.get("points", []) if data else []
+        # Log the request for debugging if no points are returned
+        if not data or not data.get("points"):
+            self.logger.warning(f"No historical points returned for {asset_id} with URL: {url}")
+            return []
+            
+        return data.get("points", [])
 
     async def fetch_market_depth(self, session: aiohttp.ClientSession, headers: Dict, asset_id: str) -> Dict:
         url = f"{self.base_url}/market-depth/{asset_id}"

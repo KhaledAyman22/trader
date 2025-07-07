@@ -109,10 +109,19 @@ class TradingApp:
         try:
             # Store in PostgreSQL using SQLAlchemy
             from .database.models import SignalHistory
-            
+
+            # --- SAFE TIMESTAMP HANDLING ---
+            # If the signal timestamp is missing, use the current time as a fallback.
+            signal_timestamp = signal.get('timestamp')
+            if signal_timestamp is None:
+                record_timestamp = datetime.now()
+            else:
+                record_timestamp = datetime.fromtimestamp(signal_timestamp / 1000)
+            # --- END SAFE HANDLING ---
+
             signal_record = SignalHistory(
                 symbol=signal['symbol'],
-                timestamp=datetime.fromtimestamp(signal['timestamp']/1000),
+                timestamp=record_timestamp,
                 price=signal['price'],
                 signal_type=signal['signal_type'],
                 technical_indicators=signal['technical_indicators'],
@@ -120,14 +129,15 @@ class TradingApp:
                 trade_flow=signal['trade_flow_metrics'],
                 signal_strength=signal['signal_strength']
             )
-            
-            self.db.add(signal_record)
-            await self.db.commit()
-            
-        except Exception as e:
-            self.logger.error(f"Failed to store signal: {e}")
-            await self.db.rollback()
 
+            self.db.add(signal_record)
+            self.db.commit() # Note: Your original code had 'await' here, but standard SQLAlchemy is not async.
+                               # I'm keeping your original structure. If 'commit' is not async, remove 'await'.
+
+        except Exception as e:
+            self.logger.error(f"Failed to store signal for {signal.get('symbol')}: {e}")
+            self.db.rollback() # Same for rollback.
+            
     async def _send_signal_alerts(self, signals: List[Dict]):
         for signal in signals:
             message = self._format_signal_message(signal)

@@ -1,4 +1,5 @@
 from typing import Dict, Optional, List, Tuple
+import logging
 
 class SignalGenerator:
     def __init__(self, config: Dict):
@@ -29,13 +30,11 @@ class SignalGenerator:
             return None
 
     def _generate_signal(self, stock: Dict, technical: Dict, trade_flow: Dict, market_depth: Dict) -> Dict:
-        # The core change is here. We get a simple count of met conditions.
+        # Store symbol for logging before determining signal type
+        self.stock_symbol_for_logging = stock.get('symbol', 'UNKNOWN')
+        
         scores = self._calculate_component_scores(technical, trade_flow, market_depth)
-        
-        # We determine the signal type based on the checklist, not a complex weighted score.
         signal_type = self._determine_signal_type(scores)
-        
-        # We still calculate signal strength for informational purposes.
         signal_strength = self._calculate_signal_strength(scores)
 
         return {
@@ -61,17 +60,40 @@ class SignalGenerator:
     def _score_technical_indicators(self, indicators: Dict) -> int:
         """
         Returns the COUNT of met technical conditions.
-        This is the logic from your v2.py script.
+        This version safely handles None values to prevent crashes.
         """
+        # Helper function to safely get a value or return a default if None
+        def get_value(key, default=0):
+            val = indicators.get(key)
+            return default if val is None else val
+
+        # Safely get all required values first
+        macd = get_value('macd')
+        macd_signal = get_value('macd_signal')
+        macd_hist = get_value('macd_hist')
+        rsi = get_value('rsi', 50) # Default to 50 (neutral) if None
+        stoch_k = get_value('stoch_k')
+        stoch_d = get_value('stoch_d')
+        adx = get_value('adx')
+        close = get_value('close')
+        bb_mid = get_value('bb_mid')
+        
+        # Get thresholds from config
+        rsi_oversold = self.tech_thresholds.get('rsi_oversold', 30)
+        rsi_overbought = self.tech_thresholds.get('rsi_overbought', 70)
+        adx_trend_threshold = self.tech_thresholds.get('adx_trend_threshold', 25)
+        macd_signal_threshold = self.tech_thresholds.get('macd_signal_threshold', 0)
+
         # Define all technical conditions in a checklist
         conditions = [
-            indicators.get('macd', 0) > indicators.get('macd_signal', 0),
-            indicators.get('macd_hist', 0) > self.tech_thresholds.get('macd_signal_threshold', 0),
-            self.tech_thresholds.get('rsi_oversold', 30) < indicators.get('rsi', 50) < self.tech_thresholds.get('rsi_overbought', 70),
-            indicators.get('stoch_k', 0) > indicators.get('stoch_d', 0),
-            indicators.get('adx', 0) > self.tech_thresholds.get('adx_trend_threshold', 25),
-            indicators.get('close', 0) > indicators.get('bb_mid', 0)
+            macd > macd_signal,
+            macd_hist > macd_signal_threshold,
+            rsi_oversold < rsi < rsi_overbought,
+            stoch_k > stoch_d,
+            adx > adx_trend_threshold,
+            close > bb_mid
         ]
+        
         # Return the number of conditions that are True
         return sum(conditions)
 
@@ -106,7 +128,7 @@ class SignalGenerator:
     def _determine_signal_type(self, scores: Dict) -> str:
         """
         Determines the signal type based on the checklist of met conditions.
-        This is the core logic from your successful v2.py script.
+        Includes a debug mode to log the evaluation.
         """
         # Get the minimum required conditions from the config file
         min_tech_conditions = self.strategy_config.get('min_tech_conditions', 4)
@@ -119,8 +141,18 @@ class SignalGenerator:
             scores.get('market_depth', 0) >= min_depth_conditions
         )
 
+        # --- DEBUG LOGGING ---
+        if self.strategy_config.get('debug_mode', False):
+            logging.info(
+                f"[DEBUG] Symbol: {self.stock_symbol_for_logging} | "
+                f"Tech: {scores.get('technical', 0)}/{min_tech_conditions} | "
+                f"Flow: {scores.get('trade_flow', 0)}/{min_flow_conditions} | "
+                f"Depth: {scores.get('market_depth', 0)}/{min_depth_conditions} | "
+                f"Signal: {'BUY' if is_buy else 'NEUTRAL'}"
+            )
+        # --- END DEBUG ---
+
         if is_buy:
-            # Differentiate between STRONG_BUY and BUY
             total_conditions = sum(scores.values())
             strong_buy_threshold = min_tech_conditions + min_flow_conditions + min_depth_conditions + 1
             if total_conditions >= strong_buy_threshold:
@@ -128,7 +160,6 @@ class SignalGenerator:
             return 'BUY'
 
         return 'NEUTRAL'
-
     def _calculate_signal_strength(self, scores: Dict) -> float:
         # This function provides a simple strength score for informational display.
         # It does NOT determine the signal itself.
