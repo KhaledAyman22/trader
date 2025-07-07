@@ -3,7 +3,7 @@
         "headers": {
             "User-Agent": "Mozilla/5.0",
             "Accept": "application/json",
-            "Authorization": "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzUxMiJ9.eyJzY29wZXMiOlsicG9zdDp3cml0ZSIsImZpbGVzOndyaXRlIiwibm90aWZpY2F0aW9uczp3cml0ZSIsImt5Y19jaGFsbGVuZ2U6d3JpdGUiLCJhc3NldHM6d3JpdGUiLCJmZWVkOnJlYWQiLCJkb2N1bWVudDp3cml0ZSIsIm1hcmtldF9zaW11bGF0b3I6cmVhZCIsInN1YnNjcmlwdGlvbjpyZWFkIiwibWFya2V0X2VneXB0OnJlYWQiLCJ3YXRjaGxpc3Q6cmVhZCIsIndhdGNobGlzdDp3cml0ZSIsImludmVzdG9yOndyaXRlIiwia3ljX2NoYWxsZW5nZTpyZWFkIiwiZnVuZGluZzp3cml0ZSIsIm1hcmtldF9lZ3lwdDp3cml0ZSIsImZ1bmRpbmc6cmVhZCIsImFzc2V0czpyZWFkIiwibWFya2V0X2RlcHRoOnJlYWQiLCJtYXJrZXRfc2ltdWxhdG9yOndyaXRlIiwicG9zdDpyZWFkIiwiaW52ZXN0b3I6cmVhZCIsInVzZXI6d3JpdGUiLCJvcmRlcjpyZWFkIiwic3Vic2NyaXB0aW9uOndyaXRlIiwidXNlcjpyZWFkIiwiY2hhcnRzOnJlYWQiLCJvcmRlcjp3cml0ZSIsIm5vdGlmaWNhdGlvbnM6cmVhZCIsImFuYWx5c2lzOnJlYWQiXSwidWlkIjoiRjBzMWh5RUtNVmFpa09kQzVHWmtCVVMyUnRZMiIsImFscGFjYV9pZCI6bnVsbCwidXR5cGUiOiJ2ZXJpZmllZCIsImlhdCI6MTc1MTg5MjQzNSwiZXhwIjoxNzUxOTE0MDM1LCJkYXRhIjp7ImVtYWlsIjoia2hhbGVkYXltYW4yMjIyQGdtYWlsLmNvbSIsIm5hbWUiOiJLaGFsZWQgQXltYW4iLCJ1c2VybmFtZSI6ImtoYWxlZF9heW1hbjIifX0.cv6Nnb-zZKc7VAqr_Y0rQtMqEBH5RDj6Kn_GrOEuPbtcFydVN834t1wIfuBZkI26cz1zxfjaoXr2c_rjplgdHQ"
+            "Authorization": ""
         },
         "rate_limit_requests_per_minute": 600,
         "request_timeout_seconds": 30,
@@ -20,7 +20,7 @@
         "max_overflow": 20,
         "pool_timeout": 30
     },
-    "telegram_bot_token": "7951294938:AAGjpBy8pR-Y-Htzbly6JGcHXMG6EOwbJx4",
+    "telegram_bot_token": "",
     "scan_interval_seconds": 10,
     "historical_lookback_minutes": 120,
     "max_concurrent": 3,
