@@ -1,7 +1,7 @@
 {
   "telegram_bot_token": "",
   "scan_interval_seconds": 10,
-  "historical_lookback_minutes": 150,
+  "historical_lookback_minutes": 1440,
   "chart_resolution": "five_minutes",
   "max_concurrent": 3,
   "api_settings": {
@@ -32,13 +32,13 @@
     "institutional_trade_threshold": 50000,
     "min_daily_volume": 250000,
     "max_spread_pct": 0.02,
-    "min_tech_conditions": 4,
+    "min_tech_conditions": 3,
     "min_flow_conditions": 1,
     "min_depth_conditions": 1,
     "technical_thresholds": {
       "rsi_oversold": 30,
       "rsi_overbought": 70,
-      "adx_trend_threshold": 25,
+      "adx_trend_threshold": 20,
       "macd_signal_threshold": 0
     },
     "trade_flow_thresholds": {
