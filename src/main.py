@@ -2,7 +2,7 @@ import asyncio
 import logging
 from typing import Dict, List
 import aiohttp
-from datetime import datetime
+from datetime import datetime, date
 
 from src.database.postgres import get_db
 from src.services.market_data import MarketDataService
@@ -33,6 +33,8 @@ class TradingApp:
         self.db = next(get_db())
         self.telegram = TelegramService(config, self.db)
         self.logger = logging.getLogger(__name__)
+        self.sent_signals_today: Dict[str, Dict] = {}
+        self.current_date: date = datetime.now().date()
 
     async def run(self):
         self.logger.info("Starting trading application...")
@@ -136,6 +138,8 @@ class TradingApp:
             else:
                 record_timestamp = datetime.fromtimestamp(signal_timestamp / 1000)
             # --- END SAFE HANDLING ---
+            
+            risk_metrics = signal.get('risk_metrics', {})
 
             signal_record = SignalHistory(
                 symbol=signal['symbol'],
@@ -145,23 +149,44 @@ class TradingApp:
                 technical_indicators=signal['technical_indicators'],
                 market_depth=signal['trade_flow_metrics'],
                 trade_flow=signal['trade_flow_metrics'],
-                signal_strength=signal['signal_strength']
+                signal_strength=signal['signal_strength'],
+                target=risk_metrics.get('take_profit'),
+                buy_price=risk_metrics.get('adjusted_buy_price'),
+                stop_loss=risk_metrics.get('stop_loss')
             )
 
             self.db.add(signal_record)
-            self.db.commit() # Note: Your original code had 'await' here, but standard SQLAlchemy is not async.
-                               # I'm keeping your original structure. If 'commit' is not async, remove 'await'.
+            self.db.commit()
 
         except Exception as e:
             self.logger.error(f"Failed to store signal for {signal.get('symbol')}: {e}")
-            self.db.rollback() # Same for rollback.
-            
+            self.db.rollback() 
     async def _send_signal_alerts(self, signals: List[Dict]):
-        for signal in signals:
-            message = self._format_signal_message(signal)
-            await self.telegram.send_alert('signal', message)
+        today = datetime.now().date()
+        if today != self.current_date:
+            self.sent_signals_today.clear()
+            self.current_date = today
 
-    def _format_signal_message(self, signal: Dict) -> str:
+        for signal in signals:
+            symbol = signal.get('symbol')
+            if not symbol:
+                continue
+
+            last_signal = self.sent_signals_today.get(symbol)
+            
+            is_different = (
+                not last_signal or
+                last_signal.get('signal_type') != signal.get('signal_type') or
+                abs(last_signal.get('signal_strength', 0) - signal.get('signal_strength', 0)) > 0.05
+            )
+
+            if is_different:
+                is_update = last_signal is not None
+                message = self._format_signal_message(signal, is_update=is_update)
+                await self.telegram.send_alert('signal', message)
+                self.sent_signals_today[symbol] = signal
+
+    def _format_signal_message(self, signal: Dict, is_update: bool = False) -> str:
         # Safely extract all data from the enriched signal object
         stock_details = signal.get('stock_details', {})
         risk_metrics = signal.get('risk_metrics', {})
@@ -199,9 +224,11 @@ class TradingApp:
         if (price - stop_loss) > 0:
             risk_reward = (take_profit - price) / (price - stop_loss)
 
+        update_note = "🔥 *UPDATE* 🔥\n" if is_update else ""
+
         # Build the message
         return (
-            f"🚀 *{signal_type} SIGNAL*\n"
+            f"{update_note}🚀 *{signal_type} SIGNAL*\n"
             f"*{name} ({symbol})*\n\n"
             f"💰 *Current Price:* `{price:.2f} EGP`\n"
             f"🎯 *Entry Target:* `{adjusted_buy_price:.2f} EGP`\n"
@@ -217,7 +244,7 @@ class TradingApp:
             f"• Technical: `{tech_score}/6`\n"
             f"• Trade Flow: `{flow_score}/2`\n"
             f"• Market Depth: `{depth_score}/2`\n\n"
-            f"⭐ *Overall Strength:* `{overall_strength:.0%}`\n\n" # Add the new line here
+            f"⭐ *Overall Strength:* `{overall_strength:.0%}`\n\n"
             f"🎯 *Exit Strategy:*\n"
             f"🔴 *Stop-Loss:* `{stop_loss:.2f} EGP`\n"
             f"🟢 *Take-Profit:* `{take_profit:.2f} EGP`\n"

@@ -13,10 +13,13 @@ class SignalHistory(Base):
     technical_indicators = Column(JSON)
     market_depth = Column(JSON)
     trade_flow = Column(JSON)
-    signal_strength = Column(JSON)
+    signal_strength = Column(Float)
     market_cap = Column(Float)
     sector = Column(String)
-
+    target = Column(Float)
+    buy_price = Column(Float)
+    stop_loss = Column(Float)
+    
 class Subscriber(Base):
     __tablename__ = "subscribers"
     
