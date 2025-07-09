@@ -25,3 +25,11 @@ if __name__ == "__main__":
 
     app = TradingApp(config)
     asyncio.run(app.run())
+
+
+
+    #change in recommendations 
+    #make it trade by itself
+    #notification for target and stop loss and update db  accordingly
+        
+    

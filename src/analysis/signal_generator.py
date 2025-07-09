@@ -1,5 +1,6 @@
 from typing import Dict, Optional, List, Tuple
 import logging
+import pandas as pd
 
 class SignalGenerator:
     def __init__(self, config: Dict):
@@ -23,13 +24,13 @@ class SignalGenerator:
             from .trade_flow import analyze_trade_flow
             trade_flow = analyze_trade_flow(trades_data, self.config)
 
-            # Combine all analyses
-            return self._generate_signal(stock, technical_indicators, trade_flow, market_depth)
+            # Combine all analyses, passing historical data for risk calculation
+            return self._generate_signal(stock, technical_indicators, trade_flow, market_depth, historical_data)
         except Exception as e:
             print(f"Error analyzing stock {stock.get('symbol')}: {e}")
             return None
 
-    def _generate_signal(self, stock: Dict, technical: Dict, trade_flow: Dict, market_depth: Dict) -> Dict:
+    def _generate_signal(self, stock: Dict, technical: Dict, trade_flow: Dict, market_depth: Dict, historical_data: List[Dict]) -> Dict:
         # Store symbol for logging before determining signal type
         self.stock_symbol_for_logging = stock.get('symbol', 'UNKNOWN')
         
@@ -48,10 +49,11 @@ class SignalGenerator:
             'component_scores': scores,
             'technical_indicators': technical,
             'trade_flow_metrics': trade_flow,
-            'risk_metrics': self._calculate_risk_metrics(stock, technical, market_depth),
+            'risk_metrics': self._calculate_risk_metrics(stock, technical, market_depth, historical_data), # Pass historical data
             'stock_details': stock  # This includes market_cap, P/E, sector, etc.
         }
         return signal
+        
     def _calculate_component_scores(self, technical: Dict, trade_flow: Dict, market_depth: Dict) -> Dict:
         # This function now returns a dictionary of integer counts.
         return {
@@ -172,18 +174,42 @@ class SignalGenerator:
         return current_score / max_possible_score if max_possible_score > 0 else 0
 
     def _calculate_risk_metrics(self, stock: Dict, technical: Dict,
-                              market_depth: Dict) -> Dict:
+                              market_depth: Dict, historical_data: List[Dict]) -> Dict:
         # Get the current price and key indicators safely
         price = stock.get('last_trade_price', 0)
         atr = technical.get('atr', 0)
         bb_mid = technical.get('bb_mid', 0)
 
-        # Get multipliers from config file
-        stop_loss_multiplier = self.strategy_config.get('stop_loss_atr_multiplier', 2.0)
-        take_profit_multiplier = self.strategy_config.get('take_profit_atr_multiplier', 4.0)
+        # Get multipliers and settings from config file
+        stop_loss_atr_multiplier = self.strategy_config.get('stop_loss_atr_multiplier', 2.0)
+        take_profit_multiplier = self.strategy_config.get('take_profit_atr_multiplier', 5.0) # Increased for better R/R
+        lookback_period = self.strategy_config.get('structural_stop_lookback', 5)
 
-        # Calculate stop-loss and take-profit prices
-        stop_loss = price - (atr * stop_loss_multiplier) if atr > 0 and price > 0 else 0
+        # --- Enhanced Stop-Loss Calculation ---
+        volatility_stop = price - (atr * stop_loss_atr_multiplier) if atr > 0 and price > 0 else 0
+        
+        # Calculate structural stop based on recent lows
+        structural_stop = 0
+        if historical_data and len(historical_data) >= lookback_period:
+            try:
+                # Look at the 'low' of the last N candles
+                recent_lows = [p['low'] for p in historical_data[-lookback_period:]]
+                lowest_low = min(recent_lows)
+                # Set stop just below the lowest low
+                structural_stop = lowest_low * 0.995 # e.g., 0.5% buffer below the low
+            except (KeyError, IndexError):
+                structural_stop = 0 # Fallback if data is malformed
+
+        # Use the more conservative (lower) of the two stop-loss calculations
+        if structural_stop > 0 and volatility_stop > 0:
+            stop_loss = min(volatility_stop, structural_stop)
+        elif volatility_stop > 0:
+            stop_loss = volatility_stop
+        else:
+            stop_loss = price * 0.98 # Fallback to a 2% stop-loss if others can't be calculated
+
+        # --- End Enhanced Stop-Loss ---
+
         take_profit = price + (atr * take_profit_multiplier) if atr > 0 and price > 0 else 0
 
         # --- Adjusted Buy Price Logic ---
@@ -200,7 +226,7 @@ class SignalGenerator:
             'position_size': self._calculate_position_size(stock),
             'stop_loss': stop_loss,
             'take_profit': take_profit,
-            'adjusted_buy_price': adjusted_buy_price  # Add the new adjusted price
+            'adjusted_buy_price': adjusted_buy_price
         }     
    
     def _calculate_liquidity_risk(self, depth: Dict) -> float:

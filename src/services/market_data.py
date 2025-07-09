@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 import logging
 import aiohttp
 import asyncio
@@ -72,37 +72,44 @@ class MarketDataService:
         return self._merge_stock_data(stock, data)
 
     async def fetch_historical_data(self, session: aiohttp.ClientSession, headers: Dict, asset_id: str) -> List[Dict]:
-        # --- Final, Robust Timestamp Calculation ---
-        now_dt = datetime.now()
-        market_open_dt = now_dt.replace(hour=10, minute=0, second=0, microsecond=0)
-        market_close_dt = now_dt.replace(hour=14, minute=30, second=0, microsecond=0)
-
-        # Determine the end of the fetch window
-        if now_dt < market_open_dt: # Before market open
-            # Use yesterday's close
-            end_dt = market_close_dt - timedelta(days=1)
-        elif now_dt > market_close_dt: # After market close
-            end_dt = market_close_dt
-        else: # During market hours
-            end_dt = now_dt
-        
-        to_timestamp = int(end_dt.timestamp() * 1000)
-
-        # Use a longer lookback to ensure we always have enough data, especially on Sunday/Monday
-        lookback_minutes = self.config.get('historical_lookback_minutes', 1440) # Default to 24 hours
-        start_dt = end_dt - timedelta(minutes=lookback_minutes)
-        from_timestamp = int(start_dt.timestamp() * 1000)
-        
+        """
+        Fetches historical data by recursively fetching chunks backward in time
+        until enough data points are collected.
+        """
+        all_points = []
         resolution = self.config.get('chart_resolution', 'five_minutes')
+        # Define a reasonable time chunk to fetch in each request (e.g., 7 days)
+        chunk_duration_ms = 7 * 24 * 60 * 60 * 1000 
         
-        url = f"{self.base_url}/charts/advanced?asset_id={asset_id}&resolution={resolution}&from_timestamp={from_timestamp}&to_timestamp={to_timestamp}"
-        data = await self.fetch_json(session, url, headers)
-        
-        if not data or not data.get("points"):
-            self.logger.warning(f"No historical points returned for {asset_id} with URL: {url}")
-            return []
+        # Start with the current time as the end of our first fetch window
+        to_timestamp = int(datetime.now().timestamp() * 1000)
+
+        # Loop until we have enough data or we've tried a few times
+        for _ in range(5): # Max 5 iterations to prevent infinite loops
+            # We need at least 26 points for TA, fetching ~100 for safety.
+            if len(all_points) >= 100:
+                break
+
+            from_timestamp = to_timestamp - chunk_duration_ms
             
-        return data.get("points", [])
+            url = f"{self.base_url}/charts/advanced?asset_id={asset_id}&resolution={resolution}&from_timestamp={from_timestamp}&to_timestamp={to_timestamp}"
+            
+            data = await self.fetch_json(session, url, headers)
+
+            if data and data.get("points"):
+                new_points = data["points"]
+                # Prepend the new points to keep the list chronologically sorted
+                all_points = new_points + all_points
+                # Set the 'to_timestamp' for the next iteration to the oldest point we just received
+                to_timestamp = new_points[0]['time']
+            else:
+                # No more data to fetch for this period, so we can stop.
+                break
+        
+        if not all_points:
+            self.logger.warning(f"No historical points returned for {asset_id}")
+
+        return all_points
     
     async def fetch_market_depth(self, session: aiohttp.ClientSession, headers: Dict, asset_id: str) -> Dict:
         url = f"{self.base_url}/market-depth/{asset_id}"
@@ -152,7 +159,7 @@ class MarketDataService:
             'symbol': detailed_data.get('symbol'),
             'name': detailed_data.get('name'),
             'industry': detailed_data.get('industry'),
-            'feed_data': detailed_data.get('feed', {})
+            'feed__data': detailed_data.get('feed', {})
         })
         return enhanced_stock
 
