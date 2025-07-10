@@ -11,8 +11,8 @@ class MarketDataService:
         self.rate_limiter = rate_limiter
         self.base_url = "https://prod.thndr.app/assets-service"
         self.logger = logging.getLogger(__name__)
-        # --- Caching Mechanism ---
-        self.cached_stocks: List[Dict] = []
+        # --- Caching Mechanism for Static Data ---
+        self.static_stock_data_cache: Dict[str, Dict] = {}
         self.last_cache_date: Optional[date] = None
         
     async def fetch_json(self, session: aiohttp.ClientSession, url: str, headers: Dict) -> Optional[Dict]:
@@ -34,50 +34,81 @@ class MarketDataService:
 
     async def fetch_market_data(self, session: aiohttp.ClientSession, headers: Dict) -> List[Dict]:
         """
-        Fetches and filters market data. Uses a cache to avoid re-fetching static
-        stock data throughout the day.
+        Fetches live market data and merges it with cached static data for efficiency.
         """
         today = datetime.now().date()
-        # --- Caching Logic ---
-        if self.last_cache_date == today and self.cached_stocks:
-            self.logger.info(f"Returning {len(self.cached_stocks)} stocks from cache.")
-            return self.cached_stocks
-        
-        self.logger.info("Cache is empty or stale. Performing full stock fetch and filter.")
-        # --- End Caching Logic ---
-
-        url = f"{self.base_url}/assets/marketwatch?market=egypt"
-        data = await self.fetch_json(session, url, headers)
-        
-        if not data:
-            return []
-        
-        all_stocks = [x for x in data.get('assets', []) if x.get("market_id") == "NOPL"]
-        
-        pre_filtered_stocks = [
-            stock for stock in all_stocks if self._meets_preliminary_criteria(stock)
-        ]
-        self.logger.info(f"Pre-filtered from {len(all_stocks)} to {len(pre_filtered_stocks)} stocks based on price.")
-
-        if not pre_filtered_stocks:
-            self.cached_stocks = []
+        # Clear cache at the start of a new day
+        if self.last_cache_date != today:
+            self.logger.info("New day detected. Clearing static stock data cache.")
+            self.static_stock_data_cache.clear()
             self.last_cache_date = today
+
+        # Step 1: Always fetch the latest marketwatch data for live prices
+        url = f"{self.base_url}/assets/marketwatch?market=egypt"
+        live_data = await self.fetch_json(session, url, headers)
+        
+        if not live_data or not live_data.get('assets'):
             return []
-
-        enhanced_stocks = await self._enhance_stocks_data(session, headers, pre_filtered_stocks)
-
-        final_stocks = [
-            stock for stock in enhanced_stocks if self._meets_final_criteria(stock)
+        
+        live_stocks = [x for x in live_data.get('assets', []) if x.get("market_id") == "NOPL"]
+        
+        # Step 2: Pre-filter based on live price
+        pre_filtered_stocks = [
+            stock for stock in live_stocks if self._meets_preliminary_criteria(stock)
         ]
-        self.logger.info(f"Post-filtered to {len(final_stocks)} stocks based on market cap and blacklist.")
+
+        # Step 3: Enhance with cached static data, fetching only if necessary
+        fully_enhanced_stocks = await self._enhance_with_cache(session, headers, pre_filtered_stocks)
+
+        # Step 4: Apply final filters
+        final_stocks = [
+            stock for stock in fully_enhanced_stocks if self._meets_final_criteria(stock)
+        ]
         
-        # --- Update Cache ---
-        self.cached_stocks = final_stocks
-        self.last_cache_date = today
-        self.logger.info(f"Cache updated with {len(self.cached_stocks)} stocks for {today}.")
-        # --- End Update Cache ---
-        
-        return self.cached_stocks
+        return final_stocks
+
+    async def _enhance_with_cache(self, session: aiohttp.ClientSession, headers: Dict, stocks: List[Dict]) -> List[Dict]:
+        """
+        Enhances a list of stocks with static data, using a cache to avoid redundant API calls.
+        """
+        enhanced_stocks = []
+        tasks_to_run = []
+        stocks_to_enhance_map = {}
+
+        for stock in stocks:
+            asset_id = stock.get('asset_id')
+            if not asset_id:
+                continue
+            
+            if asset_id in self.static_stock_data_cache:
+                # Merge live data with cached static data
+                merged_stock = self.static_stock_data_cache[asset_id].copy()
+                merged_stock.update(stock)
+                enhanced_stocks.append(merged_stock)
+            else:
+                # If not in cache, schedule for fetching
+                if asset_id not in stocks_to_enhance_map:
+                    task = self._fetch_stock_details(session, headers, stock)
+                    tasks_to_run.append(task)
+                    stocks_to_enhance_map[asset_id] = stock
+
+        if tasks_to_run:
+            self.logger.info(f"Fetching static details for {len(tasks_to_run)} new stocks.")
+            results = await asyncio.gather(*tasks_to_run, return_exceptions=True)
+            for result in results:
+                if isinstance(result, dict) and 'asset_id' in result:
+                    asset_id = result['asset_id']
+                    # Add to cache
+                    self.static_stock_data_cache[asset_id] = result
+                    # Merge and add to the list for this run
+                    original_stock = stocks_to_enhance_map[asset_id]
+                    merged_stock = result.copy()
+                    merged_stock.update(original_stock)
+                    enhanced_stocks.append(merged_stock)
+                elif isinstance(result, Exception):
+                    self.logger.error(f"Error enhancing stock details: {result}")
+
+        return enhanced_stocks
 
     def _meets_preliminary_criteria(self, stock: Dict) -> bool:
         """Checks criteria that can be evaluated with initial marketwatch data."""
@@ -95,34 +126,13 @@ class MarketDataService:
         symbol = stock.get('symbol', '')
         
         return (
+            market_cap is not None and
             market_cap >= strategy_config.get('min_market_cap', 0) and
             symbol not in strategy_config.get('blacklist_symbols', [])
         )
 
-    async def _enhance_stocks_data(self, session: aiohttp.ClientSession, headers: Dict, stocks: List[Dict]) -> List[Dict]:
-        """Fetches detailed data only for the provided list of stocks."""
-        batch_size = self.config.get('max_concurrent', 10)
-        enhanced_stocks = []
-        
-        if not stocks:
-            return []
-
-        for i in range(0, len(stocks), batch_size):
-            self.logger.info(f"📦 Enhancing batch {i//batch_size + 1}/{(len(stocks) + batch_size - 1)//batch_size}")
-            batch = stocks[i:i + batch_size]
-            tasks = [self._fetch_stock_details(session, headers, stock) for stock in batch]
-            
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            for result in results:
-                if isinstance(result, dict):
-                    enhanced_stocks.append(result)
-                elif isinstance(result, Exception):
-                    self.logger.error(f"Error fetching stock details: {result}")
-
-        return enhanced_stocks
-
     async def _fetch_stock_details(self, session: aiohttp.ClientSession, headers: Dict, stock: Dict) -> Optional[Dict]:
+        """Fetches the detailed (mostly static) data for a single stock."""
         asset_id = stock.get('asset_id')
         if not asset_id:
             return None
@@ -133,7 +143,15 @@ class MarketDataService:
         if not data:
             return None
             
-        return self._merge_stock_data(stock, data)
+        # Return a dictionary with only the static data we need to cache
+        return {
+            'asset_id': asset_id,
+            'market_cap': data.get('feed', {}).get('market_cap'),
+            'symbol': data.get('symbol'),
+            'name': data.get('name'),
+            'industry': data.get('industry'),
+            'feed_data': data.get('feed', {})
+        }
 
     async def fetch_historical_data(self, session: aiohttp.ClientSession, headers: Dict, asset_id: str) -> List[Dict]:
         """
@@ -206,17 +224,6 @@ class MarketDataService:
                 }
             }
         }
-
-    def _merge_stock_data(self, base_stock: Dict, detailed_data: Dict) -> Dict:
-        enhanced_stock = base_stock.copy()
-        enhanced_stock.update({
-            'market_cap': detailed_data.get('feed', {}).get('market_cap'),
-            'symbol': detailed_data.get('symbol'),
-            'name': detailed_data.get('name'),
-            'industry': detailed_data.get('industry'),
-            'feed_data': detailed_data.get('feed', {})
-        })
-        return enhanced_stock
 
     def _calculate_depth_metrics(self, depth_data: Dict) -> Dict:
         bids = depth_data.get('bids_per_price', [])

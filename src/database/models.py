@@ -7,7 +7,7 @@ class SignalHistory(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     symbol = Column(String)
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime, default=datetime.now)
     price = Column(Float)
     signal_type = Column(String)
     technical_indicators = Column(JSON)
@@ -24,4 +24,4 @@ class Subscriber(Base):
     __tablename__ = "subscribers"
     
     chat_id = Column(String, primary_key=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now)
