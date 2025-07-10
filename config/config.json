@@ -1,6 +1,6 @@
 {
   "telegram_bot_token": "",
-  "scan_interval_seconds": 60,
+  "scan_interval_seconds": 10,
   "chart_resolution": "five_minutes",
   "max_concurrent": 3,
   "api_settings": {
@@ -27,13 +27,14 @@
     "min_price": 2.0,
     "max_price": 500.0,
     "min_market_cap": 5000000,
-    "blacklist_symbols": ["DELISTED", "SUSPENDED"],
+    "blacklist_symbols": ["EGSA", "EKHO", "MOIL", "AALR"],
     "institutional_trade_threshold": 50000,
     "min_daily_volume": 250000,
     "max_spread_pct": 0.02,
-    "min_tech_conditions": 4,
-    "min_flow_conditions": 1,
+    "min_tech_conditions": 5,
+    "min_flow_conditions": 2,
     "min_depth_conditions": 1,
+    "min_signal_strength": 0.7,
     "technical_thresholds": {
       "rsi_oversold": 30,
       "rsi_overbought": 70,

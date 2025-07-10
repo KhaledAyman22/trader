@@ -82,6 +82,7 @@ class SignalGenerator:
         adx = get_value('adx')
         close = get_value('close')
         bb_mid = get_value('bb_mid')
+        sma_20 = get_value('sma_20') # Get the 20-period SMA for trend confirmation
         
         # Get thresholds from config
         rsi_oversold = self.tech_thresholds.get('rsi_oversold', 30)
@@ -96,7 +97,8 @@ class SignalGenerator:
             rsi_oversold < rsi < rsi_overbought,
             stoch_k > stoch_d,
             adx > adx_trend_threshold,
-            close > bb_mid
+            close > bb_mid,
+            close > sma_20 # New Trend Confirmation Filter
         ]
         
         # Return the number of conditions that are True
@@ -136,8 +138,8 @@ class SignalGenerator:
         Includes a debug mode to log the evaluation.
         """
         # Get the minimum required conditions from the config file
-        min_tech_conditions = self.strategy_config.get('min_tech_conditions', 4)
-        min_flow_conditions = self.strategy_config.get('min_flow_conditions', 1)
+        min_tech_conditions = self.strategy_config.get('min_tech_conditions', 5)
+        min_flow_conditions = self.strategy_config.get('min_flow_conditions', 2)
         min_depth_conditions = self.strategy_config.get('min_depth_conditions', 1)
 
         is_buy = (
@@ -169,7 +171,7 @@ class SignalGenerator:
     def _calculate_signal_strength(self, scores: Dict) -> float:
         # This function provides a simple strength score for informational display.
         # It does NOT determine the signal itself.
-        max_possible_score = 6 + 2 + 2  # Max possible conditions from all categories
+        max_possible_score = 7 + 2 + 2  # Max possible conditions from all categories
         current_score = sum(scores.values())
         return current_score / max_possible_score if max_possible_score > 0 else 0
 

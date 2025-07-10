@@ -35,31 +35,25 @@ class TradingApp:
         self.logger = logging.getLogger(__name__)
         self.sent_signals_today: Dict[str, Dict] = {}
         self.current_date: date = datetime.now().date()
+        # Load the minimum signal strength from config
+        self.min_signal_strength = self.config.get('strategy', {}).get('min_signal_strength', 0.7)
 
     async def run(self):
         self.logger.info("Starting trading application...")
         
         while True:
             try:
-                # --- CORRECT PLACEMENT ---
-                # Check for new Telegram subscribers independently of the market cycle.
                 await self.telegram.process_updates()
-                # --- END ---
-
                 await self._process_market_cycle()
-                
-                # The main sleep interval for the entire loop
                 await asyncio.sleep(self.config.get('scan_interval_seconds', 10))
 
             except Exception as e:
                 self.logger.error(f"Error in main application loop: {e}")
-                # Optional: Send an alert for critical errors in the loop itself
                 await self.telegram.send_alert('error', f"Critical application error: {str(e)}", 'high')
-                await asyncio.sleep(60) # Wait longer after a critical failure
+                await asyncio.sleep(60)
 
     async def _process_market_cycle(self):
         async with aiohttp.ClientSession() as session:
-            # Fetch market data
             stocks = await self.market_data.fetch_market_data(
                 session, 
                 self.config['api_settings']['headers']
@@ -69,16 +63,16 @@ class TradingApp:
                 try:
                     signal = await self._analyze_stock(session, stock)
              
-                    if not signal:
-                        logging.info(f"No signal generated for {stock.get('symbol')}")
+                    if not signal or signal['signal_type'] == 'NEUTRAL':
+                        continue
 
-                    elif signal and signal['signal_type'] == 'NEUTRAL':
-                        logging.info(f"Generated signal for {stock.get('symbol')}: {signal['signal_type']} last price: {stock['last_trade_price']:.2f}")
-             
-                    elif signal and signal['signal_type'] != 'NEUTRAL':
-                        logging.info(f"Generated signal for {stock.get('symbol')}: {signal['signal_type']} last price: {stock['last_trade_price']:.2f}")
+                    # --- Signal Strength Filter ---
+                    if signal['signal_strength'] >= self.min_signal_strength:
+                        self.logger.info(f"Strong signal found for {stock.get('symbol')}: {signal['signal_type']} ({signal['signal_strength']:.2f})")
                         await self._process_signals([signal])
-                    
+                    else:
+                        self.logger.info(f"Weak signal for {stock.get('symbol')} ({signal['signal_strength']:.2f}) below threshold {self.min_signal_strength}. Discarding.")
+
                 except Exception as e:
                     self.logger.error(f"Error analyzing {stock.get('symbol')}: {e}")
                 
@@ -90,57 +84,32 @@ class TradingApp:
         if not asset_id:
             return None
 
-        # Fetch additional data
         historical_data = await self.market_data.fetch_historical_data(
-            session,
-            self.config['api_settings']['headers'],
-            asset_id
+            session, self.config['api_settings']['headers'], asset_id
         )
-        
         market_depth = await self.market_data.fetch_market_depth(
-            session,
-            self.config['api_settings']['headers'],
-            asset_id
+            session, self.config['api_settings']['headers'], asset_id
         )
-        
         trades_data = await self.market_data.fetch_recent_trades(
-            session,
-            self.config['api_settings']['headers'],
-            asset_id
+            session, self.config['api_settings']['headers'], asset_id
         )
-
 
         return await self.signal_generator.analyze_stock(
-            stock,
-            historical_data,
-            market_depth,
-            trades_data
+            stock, historical_data, market_depth, trades_data
         )
 
     async def _process_signals(self, signals: List[Dict]):
-        # Store signals in database
         for signal in signals:
             await self._store_signal(signal)
-
-        # Send alerts
         await self._send_signal_alerts(signals)
 
     async def _store_signal(self, signal: Dict):
         try:
-            # Store in PostgreSQL using SQLAlchemy
             from .database.models import SignalHistory
-
-            # --- SAFE TIMESTAMP HANDLING ---
-            # If the signal timestamp is missing, use the current time as a fallback.
             signal_timestamp = signal.get('timestamp')
-            if signal_timestamp is None:
-                record_timestamp = datetime.now()
-            else:
-                record_timestamp = datetime.fromtimestamp(signal_timestamp / 1000)
-            # --- END SAFE HANDLING ---
+            record_timestamp = datetime.fromtimestamp(signal_timestamp / 1000) if signal_timestamp else datetime.now()
             
             risk_metrics = signal.get('risk_metrics', {})
-
             signal_record = SignalHistory(
                 symbol=signal['symbol'],
                 timestamp=record_timestamp,
@@ -154,13 +123,12 @@ class TradingApp:
                 buy_price=risk_metrics.get('adjusted_buy_price'),
                 stop_loss=risk_metrics.get('stop_loss')
             )
-
             self.db.add(signal_record)
             self.db.commit()
-
         except Exception as e:
             self.logger.error(f"Failed to store signal for {signal.get('symbol')}: {e}")
-            self.db.rollback() 
+            self.db.rollback()
+            
     async def _send_signal_alerts(self, signals: List[Dict]):
         today = datetime.now().date()
         if today != self.current_date:
@@ -173,7 +141,6 @@ class TradingApp:
                 continue
 
             last_signal = self.sent_signals_today.get(symbol)
-            
             is_different = (
                 not last_signal or
                 last_signal.get('signal_type') != signal.get('signal_type') or
@@ -187,7 +154,6 @@ class TradingApp:
                 self.sent_signals_today[symbol] = signal
 
     def _format_signal_message(self, signal: Dict, is_update: bool = False) -> str:
-        # Safely extract all data from the enriched signal object
         stock_details = signal.get('stock_details', {})
         risk_metrics = signal.get('risk_metrics', {})
         tech_indicators = signal.get('technical_indicators', {})
@@ -195,28 +161,20 @@ class TradingApp:
 
         price = signal.get('price', 0)
         signal_type = signal.get('signal_type', 'N/A').replace('_', ' ').upper()
-        
-        # Get the overall signal strength percentage
         overall_strength = signal.get('signal_strength', 0)
-
-        # Get the adjusted buy price
         adjusted_buy_price = risk_metrics.get('adjusted_buy_price', 0)
-
         name = stock_details.get('name', 'N/A')
         symbol = stock_details.get('symbol', 'N/A')
         change_pct = stock_details.get('last_change_prc', 0)
         market_cap = format_market_cap(stock_details.get('market_cap', 0))
         sector = stock_details.get('industry', 'N/A')
         pe_ratio = stock_details.get('pe_ratio', 0)
-
         rsi = tech_indicators.get('rsi', 0)
         macd = tech_indicators.get('macd', 0)
         atr = tech_indicators.get('atr', 0)
-
         tech_score = component_scores.get('technical', 0)
         flow_score = component_scores.get('trade_flow', 0)
         depth_score = component_scores.get('market_depth', 0)
-
         stop_loss = risk_metrics.get('stop_loss', 0)
         take_profit = risk_metrics.get('take_profit', 0)
         
@@ -226,7 +184,6 @@ class TradingApp:
 
         update_note = "🔥 *UPDATE* 🔥\n" if is_update else ""
 
-        # Build the message
         return (
             f"{update_note}🚀 *{signal_type} SIGNAL*\n"
             f"*{name} ({symbol})*\n\n"
@@ -241,7 +198,7 @@ class TradingApp:
             f"• MACD: `{macd:.3f}`\n"
             f"• ATR: `{atr:.2f}`\n\n"
             f"🎯 *Signal Breakdown:*\n"
-            f"• Technical: `{tech_score}/6`\n"
+            f"• Technical: `{tech_score}/7`\n"
             f"• Trade Flow: `{flow_score}/2`\n"
             f"• Market Depth: `{depth_score}/2`\n\n"
             f"⭐ *Overall Strength:* `{overall_strength:.0%}`\n\n"

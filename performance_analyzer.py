@@ -23,7 +23,8 @@ config = load_config()
 
 class PerformanceAnalyzer:
     """
-    Analyzes the performance of trading recommendations for the current day.
+    Analyzes the performance of trading recommendations for the current day
+    with more accurate, sequential trade logic.
     """
 
     def __init__(self):
@@ -52,54 +53,35 @@ class PerformanceAnalyzer:
             FROM
                 signal_history
             WHERE
-                timestamp >= date_trunc('day', NOW())
+                timestamp >= date_trunc('day', NOW()) AND timestamp < '2025-07-10 14:30:00'
                 AND signal_type IN ('BUY', 'STRONG_BUY')
-                AND signal_strength >= :min_strength
+                --AND signal_strength >= :min_strength
             ORDER BY
-                timestamp DESC;
+                timestamp ASC; -- Order chronologically to process trades in order
         """)
         try:
             loop = asyncio.get_running_loop()
             results = await loop.run_in_executor(None, lambda: self.db.execute(query, {'min_strength': min_strength}).fetchall())
             
-            recommendations = [
-                {
-                    "id": row[0], "symbol": row[1], "timestamp": row[2],
-                    "recommended_price": row[3], "signal_type": row[4],
-                    "signal_strength": row[5], "target": row[6],
-                    "buy_price": row[7], "stop_loss": row[8],
-                }
-                for row in results
-            ]
+            recommendations = [dict(row._mapping) for row in results]
             self.logger.info(f"Found {len(recommendations)} recommendations in the database.")
             return recommendations
         except Exception as e:
             self.logger.error(f"Failed to fetch today's recommendations: {e}")
             return []
 
-    async def get_intraday_high_low_after_time(self, session: aiohttp.ClientSession, asset_id: str, rec_timestamp: datetime) -> Dict:
+    async def get_intraday_data_after_time(self, session: aiohttp.ClientSession, asset_id: str, rec_timestamp: datetime) -> List[Dict]:
         """
-        Fetches the high and low prices for a stock for the current day, but only
-        considers the period *after* the recommendation was made.
+        Fetches the 5-minute candle data for the rest of the day after a recommendation.
         """
         now = datetime.now()
-        # Convert recommendation timestamp to milliseconds for the API
         from_timestamp = int(rec_timestamp.timestamp() * 1000)
         to_timestamp = int(now.timestamp() * 1000)
 
         url = f"https://prod.thndr.app/assets-service/charts/advanced?asset_id={asset_id}&resolution=five_minutes&from_timestamp={from_timestamp}&to_timestamp={to_timestamp}"
         data = await self.market_data_service.fetch_json(session, url, config['api_settings']['headers'])
 
-        if data and data.get("points"):
-            points = data["points"]
-            
-            # Find the highest high and lowest low from the fetched points
-            post_rec_high = max(p['high'] for p in points)
-            post_rec_low = min(p['low'] for p in points)
-            
-            return {"high": post_rec_high, "low": post_rec_low}
-            
-        return {"high": None, "low": None}
+        return data.get("points", []) if data else []
         
     async def analyze(self):
         """Main function to run the performance analysis."""
@@ -110,69 +92,72 @@ class PerformanceAnalyzer:
             self.logger.info("No recommendations found for today. Exiting.")
             return
 
-        # If recommendations are found, print them for debugging
-        print("\n--- Fetched Recommendations ---")
-        for rec in recommendations:
-            print(rec)
-        print("-----------------------------\n")
-
         total_wins = 0
         total_losses = 0
         total_gain = 0.0
         total_loss = 0.0
         
         async with aiohttp.ClientSession() as session:
-            # First, get all asset_ids to fetch market data efficiently
-            self.logger.info("Fetching market asset data...")
             all_assets = await self.market_data_service.fetch_market_data(session, config['api_settings']['headers'])
             symbol_to_asset_id = {asset['symbol']: asset['asset_id'] for asset in all_assets if 'symbol' in asset and 'asset_id' in asset}
-            self.logger.info(f"Found {len(symbol_to_asset_id)} assets.")
-
 
             for rec in recommendations:
                 symbol = rec['symbol']
                 asset_id = symbol_to_asset_id.get(symbol)
-
+                
                 if not asset_id:
                     self.logger.warning(f"Could not find asset_id for {symbol}. Skipping.")
                     continue
 
-                # Fetch the high/low prices that occurred *after* the recommendation time
-                day_prices = await self.get_intraday_high_low_after_time(session, asset_id, rec['timestamp'])
-                day_high = day_prices.get('high')
-                day_low = day_prices.get('low')
-
-                if day_high is None or day_low is None:
-                    self.logger.warning(f"Could not fetch post-recommendation high/low for {symbol}. Skipping.")
+                intraday_candles = await self.get_intraday_data_after_time(session, asset_id, rec['timestamp'])
+                
+                if not intraday_candles:
+                    self.logger.warning(f"Could not fetch post-recommendation data for {symbol}. Skipping.")
                     continue
 
                 target_price = rec.get('target')
                 stop_loss_price = rec.get('stop_loss')
                 buy_price = rec.get('buy_price')
+                
                 status = "PENDING"
                 pnl = 0.0
+                trade_entered = False
 
-                # Check for WIN: Target must be hit after the recommendation
-                if target_price and day_high >= target_price:
-                    status = "WIN"
-                    total_wins += 1
-                    pnl = target_price - buy_price
-                    total_gain += pnl
-                # Check for LOSS: Stop-loss must be hit after the recommendation
-                elif stop_loss_price and day_low <= stop_loss_price:
-                    status = "LOSS"
-                    total_losses += 1
-                    pnl = buy_price - stop_loss_price
-                    total_loss += pnl
+                for candle in intraday_candles:
+                    candle_low = candle.get('low', 0)
+                    candle_high = candle.get('high', 0)
+
+                    # Step 1: Check if the trade has been entered
+                    if not trade_entered and buy_price and candle_low <= buy_price <= candle_high:
+                        trade_entered = True
+                        status = "ENTERED"
+                        # Once entered, we check for win/loss in the *same* candle
+                    
+                    # Step 2: If trade is live, check for win or loss
+                    if trade_entered:
+                        # Check for WIN: Did the price hit the target?
+                        if target_price and candle_high >= target_price:
+                            status = "WIN"
+                            pnl = target_price - buy_price
+                            total_wins += 1
+                            total_gain += pnl
+                            break # Exit loop once trade is resolved
+
+                        # Check for LOSS: Did the price hit the stop-loss?
+                        if stop_loss_price and candle_low <= stop_loss_price:
+                            status = "LOSS"
+                            pnl = buy_price - stop_loss_price # Loss is positive for calculation
+                            total_losses += 1
+                            total_loss += pnl
+                            break # Exit loop once trade is resolved
                 
-                print("-" * 50)
-                print(f"Symbol: {symbol} ({rec['signal_type']})")
-                print(f"  - Recommendation Time: {rec['timestamp'].strftime('%H:%M:%S')}")
-                print(f"  - Entry: {buy_price:.2f} | Target: {target_price:.2f} | Stop: {stop_loss_price:.2f}")
-                print(f"  - Post-Rec Range: Low={day_low:.2f}, High={day_high:.2f}")
-                print(f"  - Status: {status}")
-                if status != "PENDING":
-                    print(f"  - P/L: {pnl:.2f} EGP")
+                # print("-" * 50)
+                # print(f"Symbol: {symbol} ({rec['signal_type']})")
+                # print(f"  - Recommendation Time: {rec['timestamp'].strftime('%H:%M:%S')}")
+                # print(f"  - Entry: {buy_price:.2f} | Target: {target_price:.2f} | Stop: {stop_loss_price:.2f}")
+                # print(f"  - Status: {status}")
+                # if status in ["WIN", "LOSS"]:
+                #     print(f"  - P/L: {pnl:.2f} EGP")
         
         # --- Final Summary ---
         net_profit = total_gain - total_loss
