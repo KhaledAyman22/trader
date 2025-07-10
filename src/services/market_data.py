@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta, time, date
 import logging
 import aiohttp
 import asyncio
@@ -11,6 +11,9 @@ class MarketDataService:
         self.rate_limiter = rate_limiter
         self.base_url = "https://prod.thndr.app/assets-service"
         self.logger = logging.getLogger(__name__)
+        # --- Caching Mechanism ---
+        self.cached_stocks: List[Dict] = []
+        self.last_cache_date: Optional[date] = None
         
     async def fetch_json(self, session: aiohttp.ClientSession, url: str, headers: Dict) -> Optional[Dict]:
         try:
@@ -30,21 +33,82 @@ class MarketDataService:
             return None
 
     async def fetch_market_data(self, session: aiohttp.ClientSession, headers: Dict) -> List[Dict]:
+        """
+        Fetches and filters market data. Uses a cache to avoid re-fetching static
+        stock data throughout the day.
+        """
+        today = datetime.now().date()
+        # --- Caching Logic ---
+        if self.last_cache_date == today and self.cached_stocks:
+            self.logger.info(f"Returning {len(self.cached_stocks)} stocks from cache.")
+            return self.cached_stocks
+        
+        self.logger.info("Cache is empty or stale. Performing full stock fetch and filter.")
+        # --- End Caching Logic ---
+
         url = f"{self.base_url}/assets/marketwatch?market=egypt"
         data = await self.fetch_json(session, url, headers)
         
         if not data:
             return []
         
-        stocks = [x for x in data.get('assets', []) if x.get("market_id") == "NOPL"]
-        return await self._enhance_stocks_data(session, headers, stocks)
+        all_stocks = [x for x in data.get('assets', []) if x.get("market_id") == "NOPL"]
+        
+        pre_filtered_stocks = [
+            stock for stock in all_stocks if self._meets_preliminary_criteria(stock)
+        ]
+        self.logger.info(f"Pre-filtered from {len(all_stocks)} to {len(pre_filtered_stocks)} stocks based on price.")
+
+        if not pre_filtered_stocks:
+            self.cached_stocks = []
+            self.last_cache_date = today
+            return []
+
+        enhanced_stocks = await self._enhance_stocks_data(session, headers, pre_filtered_stocks)
+
+        final_stocks = [
+            stock for stock in enhanced_stocks if self._meets_final_criteria(stock)
+        ]
+        self.logger.info(f"Post-filtered to {len(final_stocks)} stocks based on market cap and blacklist.")
+        
+        # --- Update Cache ---
+        self.cached_stocks = final_stocks
+        self.last_cache_date = today
+        self.logger.info(f"Cache updated with {len(self.cached_stocks)} stocks for {today}.")
+        # --- End Update Cache ---
+        
+        return self.cached_stocks
+
+    def _meets_preliminary_criteria(self, stock: Dict) -> bool:
+        """Checks criteria that can be evaluated with initial marketwatch data."""
+        strategy_config = self.config['strategy']
+        price = stock.get('last_trade_price', 0)
+        
+        return (
+            strategy_config.get('min_price', 0) <= price <= strategy_config.get('max_price', float('inf'))
+        )
+
+    def _meets_final_criteria(self, stock: Dict) -> bool:
+        """Checks criteria that require detailed, enhanced stock data."""
+        strategy_config = self.config['strategy']
+        market_cap = stock.get('market_cap', 0)
+        symbol = stock.get('symbol', '')
+        
+        return (
+            market_cap >= strategy_config.get('min_market_cap', 0) and
+            symbol not in strategy_config.get('blacklist_symbols', [])
+        )
 
     async def _enhance_stocks_data(self, session: aiohttp.ClientSession, headers: Dict, stocks: List[Dict]) -> List[Dict]:
+        """Fetches detailed data only for the provided list of stocks."""
         batch_size = self.config.get('max_concurrent', 10)
         enhanced_stocks = []
         
+        if not stocks:
+            return []
+
         for i in range(0, len(stocks), batch_size):
-            self.logger.info(f"📦 Processing batch {i//batch_size + 1}/{(len(stocks) + batch_size - 1)//batch_size}")
+            self.logger.info(f"📦 Enhancing batch {i//batch_size + 1}/{(len(stocks) + batch_size - 1)//batch_size}")
             batch = stocks[i:i + batch_size]
             tasks = [self._fetch_stock_details(session, headers, stock) for stock in batch]
             
@@ -56,7 +120,7 @@ class MarketDataService:
                 elif isinstance(result, Exception):
                     self.logger.error(f"Error fetching stock details: {result}")
 
-        return self._apply_filters(enhanced_stocks)
+        return enhanced_stocks
 
     async def _fetch_stock_details(self, session: aiohttp.ClientSession, headers: Dict, stock: Dict) -> Optional[Dict]:
         asset_id = stock.get('asset_id')
@@ -78,32 +142,23 @@ class MarketDataService:
         """
         all_points = []
         resolution = self.config.get('chart_resolution', 'five_minutes')
-        # Define a reasonable time chunk to fetch in each request (e.g., 7 days)
         chunk_duration_ms = 7 * 24 * 60 * 60 * 1000 
         
-        # Start with the current time as the end of our first fetch window
         to_timestamp = int(datetime.now().timestamp() * 1000)
 
-        # Loop until we have enough data or we've tried a few times
-        for _ in range(5): # Max 5 iterations to prevent infinite loops
-            # We need at least 26 points for TA, fetching ~100 for safety.
+        for _ in range(5): 
             if len(all_points) >= 100:
                 break
 
             from_timestamp = to_timestamp - chunk_duration_ms
-            
             url = f"{self.base_url}/charts/advanced?asset_id={asset_id}&resolution={resolution}&from_timestamp={from_timestamp}&to_timestamp={to_timestamp}"
-            
             data = await self.fetch_json(session, url, headers)
 
             if data and data.get("points"):
                 new_points = data["points"]
-                # Prepend the new points to keep the list chronologically sorted
                 all_points = new_points + all_points
-                # Set the 'to_timestamp' for the next iteration to the oldest point we just received
                 to_timestamp = new_points[0]['time']
             else:
-                # No more data to fetch for this period, so we can stop.
                 break
         
         if not all_points:
@@ -159,7 +214,7 @@ class MarketDataService:
             'symbol': detailed_data.get('symbol'),
             'name': detailed_data.get('name'),
             'industry': detailed_data.get('industry'),
-            'feed__data': detailed_data.get('feed', {})
+            'feed_data': detailed_data.get('feed', {})
         })
         return enhanced_stock
 
@@ -181,22 +236,3 @@ class MarketDataService:
             'asks_vol': asks_vol,
             'spread': spread
         }
-
-    def _apply_filters(self, stocks: List[Dict]) -> List[Dict]:
-        filtered_stocks = []
-        for stock in stocks:
-            if self._meets_criteria(stock):
-                filtered_stocks.append(stock)
-        return filtered_stocks
-
-    def _meets_criteria(self, stock: Dict) -> bool:
-        strategy_config = self.config['strategy']
-        price = stock.get('last_trade_price', 0)
-        market_cap = stock.get('market_cap', 0)
-        symbol = stock.get('symbol', '')
-        
-        return (
-            strategy_config.get('min_price', 0) <= price <= strategy_config.get('max_price', float('inf')) and
-            market_cap >= strategy_config.get('min_market_cap', 0) and
-            symbol not in strategy_config.get('blacklist_symbols', [])
-        )
