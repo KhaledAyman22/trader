@@ -19,6 +19,8 @@ class SignalHistory(Base):
     target = Column(Float)
     buy_price = Column(Float)
     stop_loss = Column(Float)
+    position_size_egp = Column(Float)
+    shares_to_buy = Column(Integer)
     
 class Subscriber(Base):
     __tablename__ = "subscribers"
