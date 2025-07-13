@@ -35,8 +35,7 @@ class TradingApp:
         self.logger = logging.getLogger(__name__)
         self.sent_signals_today: Dict[str, Dict] = {}
         self.current_date: date = datetime.now().date()
-        # Load the minimum signal strength from config
-        self.min_signal_strength = self.config.get('strategy', {}).get('min_signal_strength', 0.7)
+        self.min_signal_strength = self.config.get('strategy', {}).get('min_signal_strength', 0.75) # Updated Default
 
     async def run(self):
         self.logger.info("Starting trading application...")
@@ -66,7 +65,6 @@ class TradingApp:
                     if not signal or signal['signal_type'] == 'NEUTRAL':
                         continue
 
-                    # --- Signal Strength Filter ---
                     if signal['signal_strength'] >= self.min_signal_strength:
                         self.logger.info(f"Strong signal found for {stock.get('symbol')}: {signal['signal_type']} ({signal['signal_strength']:.2f})")
                         await self._process_signals([signal])
@@ -98,63 +96,33 @@ class TradingApp:
             stock, historical_data, market_depth, trades_data
         )
 
-
-        try:
-            from .database.models import SignalHistory
-            signal_timestamp = signal.get('timestamp')
-            record_timestamp = datetime.fromtimestamp(signal_timestamp / 1000) if signal_timestamp else datetime.now()
-            
-            risk_metrics = signal.get('risk_metrics', {})
-            signal_record = SignalHistory(
-                symbol=signal['symbol'],
-                timestamp=record_timestamp,
-                price=signal['price'],
-                signal_type=signal['signal_type'],
-                technical_indicators=signal['technical_indicators'],
-                market_depth=signal['trade_flow_metrics'],
-                trade_flow=signal['trade_flow_metrics'],
-                signal_strength=signal['signal_strength'],
-                target=risk_metrics.get('take_profit'),
-                buy_price=risk_metrics.get('adjusted_buy_price'),
-                stop_loss=risk_metrics.get('stop_loss')
-            )
-            self.db.add(signal_record)
-            self.db.commit()
-        except Exception as e:
-            self.logger.error(f"Failed to store signal for {signal.get('symbol')}: {e}")
-            self.db.rollback()
-
     async def _process_signals(self, signals: List[Dict]):
         """
         Processes generated signals by calculating position size,
         storing them, and sending alerts.
         """
         for signal in signals:
-            # --- START: POSITION SIZING CALCULATION ---
             risk_metrics = signal.get('risk_metrics', {})
-            current_price = signal.get('price', 0)
+            buy_price = risk_metrics.get('adjusted_buy_price', signal.get('price', 0)) # Use adjusted price
             stop_loss_price = risk_metrics.get('stop_loss', 0)
             
-            # Get wallet and risk settings from config
             wallet_value = self.config.get('total_wallet_value', 0)
-            risk_pct = self.config.get('risk_per_trade_percentage', 0.01) # Default to 1%
+            risk_pct = self.config.get('risk_per_trade_percentage', 0.01)
             
             risk_per_trade_egp = wallet_value * risk_pct
-            risk_per_share = current_price - stop_loss_price
+            risk_per_share = buy_price - stop_loss_price
 
             shares_to_buy = 0
             position_size_egp = 0
             
             if risk_per_share > 0:
                 shares_to_buy = int(risk_per_trade_egp / risk_per_share)
-                position_size_egp = shares_to_buy * current_price
+                position_size_egp = shares_to_buy * buy_price
 
-            # Add calculated values to the signal dictionary for storage and alerting
             signal['shares_to_buy'] = shares_to_buy
             signal['position_size_egp'] = position_size_egp
-            # --- END: POSITION SIZING CALCULATION ---
 
-            await self._store_signal(signal) # The signal dict now contains the new data
+            await self._store_signal(signal)
 
         await self._send_signal_alerts(signals)
 
@@ -177,8 +145,6 @@ class TradingApp:
                 target=risk_metrics.get('take_profit'),
                 buy_price=risk_metrics.get('adjusted_buy_price'),
                 stop_loss=risk_metrics.get('stop_loss'),
-                
-                # --- SAVE NEW DATA TO DB ---
                 position_size_egp=signal.get('position_size_egp'),
                 shares_to_buy=signal.get('shares_to_buy')
             )
@@ -236,24 +202,21 @@ class TradingApp:
         depth_score = component_scores.get('market_depth', 0)
         stop_loss = risk_metrics.get('stop_loss', 0)
         take_profit = risk_metrics.get('take_profit', 0)
-        
-        # --- GET NEW CALCULATED VALUES ---
         position_size_egp = signal.get('position_size_egp', 0)
         shares_to_buy = signal.get('shares_to_buy', 0)
         
-        # --- FORMAT THE ACTION LINE ---
         action_line = f"💰 *ACTION: Invest {position_size_egp:,.2f} EGP ({shares_to_buy} shares)*\n\n"
-
-        risk_reward = 0
-        if (price - stop_loss) > 0:
-            risk_reward = (take_profit - price) / (price - stop_loss)
+        
+        risk_per_share = adjusted_buy_price - stop_loss
+        reward_per_share = take_profit - adjusted_buy_price
+        risk_reward = reward_per_share / risk_per_share if risk_per_share > 0 else 0
 
         update_note = "🔥 *UPDATE* 🔥\n" if is_update else ""
 
         return (
             f"{update_note}🚀 *{signal_type} SIGNAL*\n"
             f"*{name} ({symbol})*\n\n"
-            f"{action_line }"#if position_size_egp > 0 else ''
+            f"{action_line if position_size_egp > 0 else ''}"
             f"💰 *Current Price:* `{price:.2f} EGP`\n"
             f"🎯 *Entry Target:* `{adjusted_buy_price:.2f} EGP`\n"
             f"📊 *Change:* `{change_pct:.2f}%`\n"
@@ -265,7 +228,7 @@ class TradingApp:
             f"• MACD: `{macd:.3f}`\n"
             f"• ATR: `{atr:.2f}`\n\n"
             f"🎯 *Signal Breakdown:*\n"
-            f"• Technical: `{tech_score}/7`\n"
+            f"• Technical: `{tech_score}/8`\n" # Updated Max Score
             f"• Trade Flow: `{flow_score}/2`\n"
             f"• Market Depth: `{depth_score}/2`\n\n"
             f"⭐ *Overall Strength:* `{overall_strength:.0%}`\n\n"

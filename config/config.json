@@ -1,7 +1,7 @@
 {
   "telegram_bot_token": "",
   "total_wallet_value": 100000,
-  "risk_per_trade_percentage": 0.015,
+  "risk_per_trade_percentage": 0.01,
   "scan_interval_seconds": 10,
   "chart_resolution": "five_minutes",
   "max_concurrent": 3,
@@ -19,7 +19,7 @@
     "port": 5432,
     "database": "trader_db",
     "user": "postgres",
-    "password": "admin",
+    "password": "deathParade@0",
     "pool_size": 10,
     "max_overflow": 20,
     "pool_timeout": 30
@@ -33,10 +33,10 @@
     "institutional_trade_threshold": 50000,
     "min_daily_volume": 250000,
     "max_spread_pct": 0.02,
-    "min_tech_conditions": 5,
+    "min_tech_conditions": 6,
     "min_flow_conditions": 2,
     "min_depth_conditions": 1,
-    "min_signal_strength": 0.7,
+    "min_signal_strength": 0.75,
     "technical_thresholds": {
       "rsi_oversold": 30,
       "rsi_overbought": 70,
@@ -47,8 +47,8 @@
       "strong_buy_pressure": 0.65,
       "high_institutional_ratio": 0.6
     },
-    "stop_loss_atr_multiplier": 2.0,
-    "take_profit_atr_multiplier": 5.0,
+    "stop_loss_atr_multiplier": 1.5,
+    "take_profit_atr_multiplier": 3.0,
     "structural_stop_lookback": 5,
     "max_position_size": 75000
   }

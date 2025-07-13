@@ -53,9 +53,8 @@ class PerformanceAnalyzer:
             FROM
                 signal_history
             WHERE
-                timestamp >= date_trunc('day', NOW()) AND timestamp < '2025-07-10 14:30:00'
+                timestamp >= date_trunc('day', NOW()) AND timestamp < '2025-07-13 14:30:00'
                 AND signal_type IN ('BUY', 'STRONG_BUY')
-                --AND signal_strength >= :min_strength
             ORDER BY
                 timestamp ASC; -- Order chronologically to process trades in order
         """)

@@ -30,15 +30,15 @@ class SignalGenerator:
         self.stock_symbol_for_logging = stock.get('symbol', 'UNKNOWN')
         
         scores = self._calculate_component_scores(technical, trade_flow, market_depth)
-        signal_type = self._determine_signal_type(scores)
-        signal_strength = self._calculate_signal_strength(scores)
+        signal_type, total_score = self._determine_signal_type(scores) # Modified
+        signal_strength = self._calculate_signal_strength(total_score) # Modified
 
         signal = {
             'symbol': stock.get('symbol'),
             'timestamp': stock.get('last_update_time'),
             'price': stock.get('last_trade_price'),
             'signal_type': signal_type,
-            'signal_strength': round(signal_strength, 4), # Explicitly round for consistent storage
+            'signal_strength': round(signal_strength, 4), 
             'component_scores': scores,
             'technical_indicators': technical,
             'trade_flow_metrics': trade_flow,
@@ -59,42 +59,42 @@ class SignalGenerator:
             val = indicators.get(key)
             return default if val is None else val
 
-        macd = get_value('macd')
-        macd_signal = get_value('macd_signal')
-        macd_hist = get_value('macd_hist')
-        rsi = get_value('rsi', 50)
-        stoch_k = get_value('stoch_k')
-        stoch_d = get_value('stoch_d')
-        adx = get_value('adx')
-        close = get_value('close')
-        bb_mid = get_value('bb_mid')
-        sma_20 = get_value('sma_20')
+        score = 0
         
-        rsi_oversold = self.tech_thresholds.get('rsi_oversold', 30)
-        rsi_overbought = self.tech_thresholds.get('rsi_overbought', 70)
-        adx_trend_threshold = self.tech_thresholds.get('adx_trend_threshold', 25)
-        macd_signal_threshold = self.tech_thresholds.get('macd_signal_threshold', 0)
-
-        conditions = [
-            macd > macd_signal,
-            macd_hist > macd_signal_threshold,
-            rsi_oversold < rsi < rsi_overbought,
-            stoch_k > stoch_d,
-            adx > adx_trend_threshold,
-            close > bb_mid,
-            close > sma_20
-        ]
+        # --- High Importance Conditions (Score: 2) ---
+        # Strong trend is active
+        if get_value('adx') > self.tech_thresholds.get('adx_trend_threshold', 25):
+            score += 2
+        # MACD is in a bullish posture (above signal line AND histogram is positive)
+        if get_value('macd') > get_value('macd_signal') and get_value('macd_hist') > self.tech_thresholds.get('macd_signal_threshold', 0):
+            score += 2
         
-        return sum(conditions)
+        # --- Medium Importance Conditions (Score: 1) ---
+        # RSI is not overbought
+        if get_value('rsi', 50) < self.tech_thresholds.get('rsi_overbought', 70):
+            score += 1
+        # Stochastic is in a bullish posture
+        if get_value('stoch_k') > get_value('stoch_d'):
+            score += 1
+        # Price is above the mid-Bollinger Band
+        if get_value('close') > get_value('bb_mid'):
+            score += 1
+        # Price is above the 20-period SMA
+        if get_value('close') > get_value('sma_20'):
+            score += 1
+        
+        return score
 
     def _score_trade_flow(self, trade_flow: Dict) -> int:
-        conditions = [
-            trade_flow.get('buy_pressure', 0) > self.flow_thresholds.get('strong_buy_pressure', 0.65),
-            trade_flow.get('institutional_ratio', 0) > self.flow_thresholds.get('high_institutional_ratio', 0.60)
-        ]
-        return sum(conditions)
+        score = 0
+        if trade_flow.get('buy_pressure', 0) > self.flow_thresholds.get('strong_buy_pressure', 0.65):
+            score += 1
+        if trade_flow.get('institutional_ratio', 0) > self.flow_thresholds.get('high_institutional_ratio', 0.60):
+            score += 1
+        return score
 
     def _score_market_depth(self, depth: Dict, current_price: float) -> int:
+        score = 0
         bids_vol = depth.get('bids_vol', 0)
         asks_vol = depth.get('asks_vol', 0)
         spread = depth.get('spread', float('inf'))
@@ -102,83 +102,95 @@ class SignalGenerator:
         if asks_vol == 0 or current_price == 0:
             return 0
 
-        conditions = [
-            bids_vol > asks_vol,
-            (spread / current_price) < self.strategy_config.get('max_spread_pct', 0.02)
-        ]
-        return sum(conditions)
+        if bids_vol > asks_vol * 1.2: # Require bids to be 20% stronger than asks
+            score += 1
+        if (spread / current_price) < self.strategy_config.get('max_spread_pct', 0.02):
+            score += 1
+        return score
 
-    def _determine_signal_type(self, scores: Dict) -> str:
-        min_tech_conditions = self.strategy_config.get('min_tech_conditions', 5)
-        min_flow_conditions = self.strategy_config.get('min_flow_conditions', 2)
-        min_depth_conditions = self.strategy_config.get('min_depth_conditions', 1)
+    def _determine_signal_type(self, scores: Dict) -> Tuple[str, int]:
+        tech_score = scores.get('technical', 0)
+        flow_score = scores.get('trade_flow', 0)
+        depth_score = scores.get('market_depth', 0)
+        total_score = tech_score + flow_score + depth_score
+        
+        # Define thresholds based on the new weighted scoring
+        min_tech_score = self.strategy_config.get('min_tech_conditions', 6) # Now a score, not a count
+        min_flow_score = self.strategy_config.get('min_flow_conditions', 2)
+        min_depth_score = self.strategy_config.get('min_depth_conditions', 1)
 
         is_buy = (
-            scores.get('technical', 0) >= min_tech_conditions and
-            scores.get('trade_flow', 0) >= min_flow_conditions and
-            scores.get('market_depth', 0) >= min_depth_conditions
+            tech_score >= min_tech_score and
+            flow_score >= min_flow_score and
+            depth_score >= min_depth_score
         )
-
+        
+        # --- DEBUG LOGGING ---
         if self.strategy_config.get('debug_mode', False):
             logging.info(
                 f"[DEBUG] Symbol: {self.stock_symbol_for_logging} | "
-                f"Tech: {scores.get('technical', 0)}/{min_tech_conditions} | "
-                f"Flow: {scores.get('trade_flow', 0)}/{min_flow_conditions} | "
-                f"Depth: {scores.get('market_depth', 0)}/{min_depth_conditions} | "
+                f"Tech: {tech_score}/{min_tech_score} | "
+                f"Flow: {flow_score}/{min_flow_score} | "
+                f"Depth: {depth_score}/{min_depth_score} | "
                 f"Signal: {'BUY' if is_buy else 'NEUTRAL'}"
             )
 
         if is_buy:
-            total_conditions = sum(scores.values())
-            strong_buy_threshold = min_tech_conditions + min_flow_conditions + min_depth_conditions + 1
-            if total_conditions >= strong_buy_threshold:
-                return 'STRONG_BUY'
-            return 'BUY'
+            strong_buy_threshold = min_tech_score + min_flow_score + min_depth_score + 1
+            if total_score >= strong_buy_threshold:
+                return 'STRONG_BUY', total_score
+            return 'BUY', total_score
 
-        return 'NEUTRAL'
+        return 'NEUTRAL', total_score
    
-    def _calculate_signal_strength(self, scores: Dict) -> float:
-        max_possible_score = 7 + 2 + 2
-        current_score = sum(scores.values())
+    def _calculate_signal_strength(self, current_score: int) -> float:
+        # Max possible score: 8 (technical) + 2 (flow) + 2 (depth) = 12
+        max_possible_score = 8 + 2 + 2 
         return current_score / max_possible_score if max_possible_score > 0 else 0
 
     def _calculate_risk_metrics(self, stock: Dict, technical: Dict,
                               market_depth: Dict, historical_data: List[Dict]) -> Dict:
         price = stock.get('last_trade_price', 0)
         atr = technical.get('atr', 0)
-        bb_mid = technical.get('bb_mid', 0)
-
-        stop_loss_atr_multiplier = self.strategy_config.get('stop_loss_atr_multiplier', 2.0)
-        take_profit_multiplier = self.strategy_config.get('take_profit_atr_multiplier', 5.0)
-        lookback_period = self.strategy_config.get('structural_stop_lookback', 5)
-
-        volatility_stop = price - (atr * stop_loss_atr_multiplier) if atr > 0 and price > 0 else 0
         
+        stop_loss_atr_multiplier = self.strategy_config.get('stop_loss_atr_multiplier', 1.5)
+        take_profit_multiplier = self.strategy_config.get('take_profit_atr_multiplier', 3.0)
+        
+        if atr <= 0 or price <= 0:
+            return {'stop_loss': 0, 'take_profit': 0, 'adjusted_buy_price': price}
+
+        # --- Refined Stop-Loss Logic ---
+        # Method 1: ATR-based stop
+        atr_stop = price - (atr * stop_loss_atr_multiplier)
+        
+        # Method 2: Structural stop based on recent lows
         structural_stop = 0
+        lookback_period = self.strategy_config.get('structural_stop_lookback', 5)
         if historical_data and len(historical_data) >= lookback_period:
             try:
                 recent_lows = [p['low'] for p in historical_data[-lookback_period:]]
-                lowest_low = min(recent_lows)
-                structural_stop = lowest_low * 0.995
+                structural_stop = min(recent_lows) * 0.99 # Place stop just below the lowest low
             except (KeyError, IndexError):
                 structural_stop = 0
+        
+        # Use the more conservative (wider) stop-loss of the two methods
+        stop_loss = min(atr_stop, structural_stop) if structural_stop > 0 else atr_stop
 
-        if structural_stop > 0 and volatility_stop > 0:
-            stop_loss = min(volatility_stop, structural_stop)
-        elif volatility_stop > 0:
-            stop_loss = volatility_stop
-        else:
-            stop_loss = price * 0.98
+        # --- Take-Profit Calculation ---
+        # Ensure a minimum 1:2 risk/reward ratio
+        risk_per_share = price - stop_loss
+        take_profit = price + (risk_per_share * 2)
 
-        take_profit = price + (atr * take_profit_multiplier) if atr > 0 and price > 0 else 0
-
+        # --- Entry Price Adjustment ---
+        # Suggest a better entry price if the current price is extended
+        bb_mid = technical.get('bb_mid', 0)
         adjusted_buy_price = price
-        if price > 0 and bb_mid > 0 and price > bb_mid:
+        if bb_mid > 0 and price > bb_mid:
+            # Suggest entry halfway between current price and the 20-period moving average (bb_mid)
             adjusted_buy_price = (price + bb_mid) / 2
 
-        # Round financial values to a sensible number of decimal places for cleaner data
         return {
-            'volatility': round(atr, 4) if atr else 0,
+            'volatility': round(atr, 4),
             'liquidity_risk': self._calculate_liquidity_risk(market_depth),
             'position_size': self._calculate_position_size(stock),
             'stop_loss': round(stop_loss, 3),
